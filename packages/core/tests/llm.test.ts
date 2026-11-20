@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   callOpenAICompatibleStoryboard,
+  CHANNEL_OUTRO_NARRATION,
   checkOpenAICompatibleHealth,
   convertFlatGeminiResponseToStoryboard,
   extractJsonFromLlmText,
@@ -562,7 +563,8 @@ describe('Custom OpenAI-Compatible LLM Support', () => {
         },
       );
       expect(attemptForTopic).toBe(2);
-      expect(repaired.scenes).toHaveLength(5);
+      expect(repaired.scenes).toHaveLength(6);
+      expect(repaired.scenes[5]?.narration).toBe(CHANNEL_OUTRO_NARRATION);
     } finally {
       await mockServer.close();
     }

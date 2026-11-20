@@ -510,7 +510,7 @@ export class ReelOrchestrator {
           opts.runId,
           'script',
           10,
-          `Writing 5-scene storyboard with ${endpoint.name} (${endpoint.model})...`,
+          `Writing storyboard with ${endpoint.name} (${endpoint.model})...`,
         );
         storyboard = await generateStoryboard(env, endpoint, {
           topic: opts.topic,

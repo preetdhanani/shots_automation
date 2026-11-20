@@ -9,6 +9,7 @@ export default tseslint.config(
       '**/node_modules/**',
       '.cache/**',
       'data/**',
+      'artifacts/**',
       'whisper.cpp/**',
       'tmp.json',
       'apps/dashboard/vite.config.ts.timestamp-*',
@@ -36,7 +37,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['apps/dashboard/**/*.{ts,tsx}'],
+    files: ['apps/dashboard/**/*.{ts,tsx}', 'scripts/verify/**/*.ts'],
     languageOptions: {
       globals: {
         ...globals.browser,

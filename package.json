@@ -18,8 +18,10 @@
     "reel": "tsx --conditions=development apps/server/src/cli.ts",
     "studio": "npm -w @post/video run studio",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/video/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json && tsc --noEmit -p apps/dashboard/tsconfig.json",
+    "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/video/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json && tsc --noEmit -p apps/dashboard/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
     "test": "vitest run",
+    "verify:e2e": "tsx --conditions=development scripts/verify/runner.ts",
+    "verify": "npm run build && npm run typecheck && npm run lint && npm test && npm run verify:e2e",
     "format:check": "prettier --check ."
   },
   "devDependencies": {

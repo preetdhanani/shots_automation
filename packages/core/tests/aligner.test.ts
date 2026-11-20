@@ -80,7 +80,7 @@ describe('1-to-N Script-to-Whisper Aligner', () => {
   it('falls back cleanly to weighted estimated mode when Whisper anchors are empty', () => {
     const res = alignStoryboardWithWhisperAnchors(SAMPLE_DEMO_STORYBOARD, [], 38_000, 30);
     expect(res.alignmentMode).toBe('estimated');
-    expect(res.sceneTimings).toHaveLength(5);
+    expect(res.sceneTimings).toHaveLength(SAMPLE_DEMO_STORYBOARD.scenes.length);
     expect(res.captions[res.captions.length - 1]!.endMs).toBeLessThanOrEqual(38_000);
   });
 });

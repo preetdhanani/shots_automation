@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendChannelOutroScene,
   assembleInstagramCaption,
+  CHANNEL_OUTRO_NARRATION,
   computeNarrationHash,
   computeStoryboardVisualHash,
   convertFlatGeminiResponseToStoryboard,
@@ -15,7 +17,24 @@ describe('Storyboard Schemas & Editorial Quality Gate', () => {
     expect(res.ok).toBe(true);
     expect(res.errors).toEqual([]);
     expect(res.totalWords).toBeGreaterThanOrEqual(70);
-    expect(res.totalWords).toBeLessThanOrEqual(155);
+    expect(res.totalWords).toBeLessThanOrEqual(180);
+    expect(SAMPLE_DEMO_STORYBOARD.scenes[SAMPLE_DEMO_STORYBOARD.scenes.length - 1]?.narration).toBe(
+      CHANNEL_OUTRO_NARRATION,
+    );
+  });
+
+  it('appends the standard channel outro scene idempotently', () => {
+    const base = {
+      ...SAMPLE_DEMO_STORYBOARD,
+      scenes: SAMPLE_DEMO_STORYBOARD.scenes.slice(0, 5),
+    };
+    const withOutro = appendChannelOutroScene(base);
+    expect(withOutro.scenes).toHaveLength(6);
+    expect(withOutro.scenes[5]?.type).toBe('takeaway_cta');
+    expect(withOutro.scenes[5]?.narration).toBe(CHANNEL_OUTRO_NARRATION);
+
+    const idempotent = appendChannelOutroScene(withOutro);
+    expect(idempotent.scenes).toHaveLength(6);
   });
 
   it('rejects Phase 2 ai_media_clip scene in Phase 1', () => {

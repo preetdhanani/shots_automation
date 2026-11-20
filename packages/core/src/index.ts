@@ -128,6 +128,9 @@ export {
   type LlmHealthResult,
 } from './generation/openaiCompatibleClient.js';
 export {
+  appendChannelOutroScene,
+  CHANNEL_OUTRO_NARRATION,
+  createChannelOutroScene,
   generateStoryboard,
   generateStoryboardWithGemini,
   type GenerateStoryboardInput,

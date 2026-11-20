@@ -1,3 +1,4 @@
+import { createChannelOutroScene } from '../generation/scriptGenerator.js';
 import type { ReelStoryboard } from '../schemas/storyboard.js';
 
 export const SAMPLE_DEMO_STORYBOARD: ReelStoryboard = {
@@ -78,12 +79,13 @@ export const SAMPLE_DEMO_STORYBOARD: ReelStoryboard = {
       id: 'scene-5',
       type: 'takeaway_cta',
       narration:
-        'Treat your AI coding workflow like continuous integration and save this tip for your next project.',
+        'Treat your AI coding workflow like continuous integration and wire fast checks into every edit.',
       badge: 'PRO RULE',
       headline: 'Verify Every Edit Automatically',
       takeaway:
         'Tight fast test loops let cheaper models outperform brute force prompting.',
-      ctaText: 'Save & follow for daily AI dev tips',
+      ctaText: 'Save this harness pattern',
     },
+    createChannelOutroScene('scene-6'),
   ],
 };

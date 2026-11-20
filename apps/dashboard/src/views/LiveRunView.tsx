@@ -27,7 +27,7 @@ interface Props {
 }
 
 const GENERATION_STEPS = [
-  { key: 'script', label: 'Script & Quality Gate', hint: 'Structured 5-scene developer storyboard' },
+  { key: 'script', label: 'Script & Quality Gate', hint: 'Structured developer storyboard + channel outro' },
   { key: 'tts', label: 'Voiceover Synthesis', hint: 'Continuous studio audio normalization' },
   { key: 'align', label: 'Whisper Word Sync', hint: '1-to-N technical caption timing' },
   { key: 'render', label: 'Remotion Render', hint: '1080x1920 30fps motion graphics' },

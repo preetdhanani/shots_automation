@@ -236,9 +236,9 @@ export function validateStoryboardEditorial(storyboard: ReelStoryboard): Editori
     }
   });
 
-  if (totalWords < 70 || totalWords > 155) {
+  if (totalWords < 70 || totalWords > 180) {
     errors.push(
-      `Total spoken narration is ${totalWords} words; must be between 70 and 155 words (30-55s).`,
+      `Total spoken narration is ${totalWords} words; must be between 70 and 180 words (30-65s).`,
     );
   }
 

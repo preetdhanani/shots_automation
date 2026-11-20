@@ -6,6 +6,7 @@ import {
   validateStoryboardEditorial,
   type ContentPillar,
   type ReelStoryboard,
+  type TakeawayCtaScene,
 } from '../schemas/storyboard.js';
 import { createGeminiAbortSignal, withGeminiRetry } from './geminiClient.js';
 import {
@@ -15,6 +16,40 @@ import {
 import type { ResolvedLlmEndpoint } from './llmRegistry.js';
 import { callOpenAICompatibleStoryboard } from './openaiCompatibleClient.js';
 
+export const CHANNEL_OUTRO_NARRATION =
+  'AI news, new models, benchmarks, harnesses, clean AI coding, and vibe coding tips from top devs. Follow this channel.';
+
+export function createChannelOutroScene(id = 'scene-6'): TakeawayCtaScene {
+  return {
+    id,
+    type: 'takeaway_cta',
+    badge: 'FOLLOW FOR MORE',
+    headline: 'Stay Ahead in AI Coding',
+    takeaway:
+      'AI news · New models · Benchmarks · Harnesses · Clean AI coding & vibe coding tips from top devs',
+    ctaText: 'Follow this channel',
+    narration: CHANNEL_OUTRO_NARRATION,
+  };
+}
+
+export function appendChannelOutroScene(storyboard: ReelStoryboard): ReelStoryboard {
+  const lastScene = storyboard.scenes[storyboard.scenes.length - 1];
+  if (lastScene && lastScene.narration.trim() === CHANNEL_OUTRO_NARRATION) {
+    return storyboard;
+  }
+
+  const existingIds = new Set(storyboard.scenes.map((scene) => scene.id));
+  let outroId = `scene-${storyboard.scenes.length + 1}`;
+  if (existingIds.has(outroId)) {
+    outroId = 'scene-outro';
+  }
+
+  return {
+    ...storyboard,
+    scenes: [...storyboard.scenes, createChannelOutroScene(outroId)],
+  };
+}
+
 export interface GenerateStoryboardInput {
   topic: Pick<TopicRecord, 'title' | 'summary' | 'sourceName' | 'sourceUrl' | 'pillar'>;
   brandHandle: string;
@@ -23,14 +58,14 @@ export interface GenerateStoryboardInput {
 
 function buildSystemPrompt(): string {
   return [
-    'You are an elite technical producer creating 35 to 50 second vertical Instagram Reels (9:16) for software engineers and AI builders.',
+    'You are an elite technical producer creating 35 to 55 second vertical Instagram Reels (9:16) for software engineers and AI builders.',
     'Write crisp, high-signal, zero-fluff English narration and structured visual scenes.',
     'Rules you MUST follow strictly:',
     '1. Output 5 scenes in JSON matching the exact schema.',
     '2. Scene 1 MUST be type "hook_title" with a punchy 4-8 word headline and strong hook narration.',
     '3. Scenes 2-4 MUST use the most informative visual scenes from: "benchmark_bars", "code_compare", "terminal_demo", "news_quote_card".',
-    '4. Scene 5 MUST be type "takeaway_cta" with one actionable developer takeaway.',
-    '5. Spoken narration total across all 5 scenes MUST be between 80 and 140 words, with at least 8 words per scene.',
+    '4. Scene 5 MUST be type "takeaway_cta" with one sharp, actionable developer takeaway for this topic. Do NOT include a generic "follow this channel" sign-off in Scene 5 narration because a dedicated channel outro scene is appended automatically.',
+    '5. Spoken narration total across Scenes 1-5 MUST be between 75 and 130 words, with at least 8 words per scene.',
     '6. Every line inside codeCompare.beforeCode and codeCompare.afterCode MUST be <= 36 characters and at most 10 lines total so code stays sharp on mobile screens.',
     '7. Every benchmark bar label MUST be <= 24 characters and use accurate numbers from the topic (never invent fake benchmark scores).',
     '8. Keep caption punchy (2-4 short lines + call to action) and provide 5-8 relevant developer hashtags.',
@@ -185,7 +220,8 @@ export async function generateStoryboard(
           });
 
     try {
-      const storyboard = convertFlatGeminiResponseToStoryboard(rawJson, sources);
+      const converted = convertFlatGeminiResponseToStoryboard(rawJson, sources);
+      const storyboard = appendChannelOutroScene(converted);
       const editorial = validateStoryboardEditorial(storyboard);
       if (editorial.ok) {
         return storyboard;
