@@ -13,7 +13,7 @@ interface Props {
   ttsReady: boolean;
   onFetchLatest: () => void;
   onOpenCustomModal: () => void;
-  onGenerateFromTopic: (topicId: string) => void;
+  onGenerateFromTopic: (topic: TopicDto) => void;
   onDismissTopic: (topic: TopicDto) => void;
   onGenerateSample: () => void;
 }
@@ -229,7 +229,7 @@ export const DiscoverView: React.FC<Props> = ({
 
                   <button
                     type="button"
-                    onClick={() => onGenerateFromTopic(topic.id)}
+                    onClick={() => onGenerateFromTopic(topic)}
                     title={
                       scriptLlmReady && ttsReady
                         ? `Generate 9:16 Reel with ${activeLlmLabel}`

@@ -8,19 +8,22 @@ import {
   type VoiceName,
 } from '@post/core/shared';
 import { Sparkles, Volume2, Square, X } from 'lucide-react';
-import { playVoicePreview, stopVoicePreview, type LlmStateDto } from '../api.js';
+import { playVoicePreview, stopVoicePreview, type LlmStateDto, type TopicDto } from '../api.js';
+import { PillarBadge } from './PillarBadge.js';
 
 interface Props {
   open: boolean;
+  topic?: TopicDto | null;
   defaultVoice: VoiceName;
   defaultMusicEnabled: boolean;
   llmState: LlmStateDto | null;
   ttsReady: boolean;
   onClose: () => void;
   onGenerate: (input: {
-    prompt: string;
-    url: string;
-    pillar: ContentPillar;
+    topicId?: string;
+    prompt?: string;
+    url?: string;
+    pillar?: ContentPillar;
     voiceName: VoiceName;
     musicEnabled: boolean;
     llmEndpointId?: string;
@@ -30,6 +33,7 @@ interface Props {
 
 export const CustomReelModal: React.FC<Props> = ({
   open,
+  topic = null,
   defaultVoice,
   defaultMusicEnabled,
   llmState,
@@ -66,23 +70,32 @@ export const CustomReelModal: React.FC<Props> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt.trim() && !url.trim()) {
+    if (!topic && !prompt.trim() && !url.trim()) {
       onError('Enter a topic idea or paste an article/GitHub URL.');
       return;
     }
     setSubmitting(true);
     try {
       stopVoicePreview();
-      await onGenerate({
-        prompt: prompt.trim(),
-        url: url.trim(),
-        pillar,
-        voiceName,
-        musicEnabled,
-        llmEndpointId: selectedEndpoint?.id,
-      });
-      setPrompt('');
-      setUrl('');
+      if (topic) {
+        await onGenerate({
+          topicId: topic.id,
+          voiceName,
+          musicEnabled,
+          llmEndpointId: selectedEndpoint?.id,
+        });
+      } else {
+        await onGenerate({
+          prompt: prompt.trim(),
+          url: url.trim(),
+          pillar,
+          voiceName,
+          musicEnabled,
+          llmEndpointId: selectedEndpoint?.id,
+        });
+        setPrompt('');
+        setUrl('');
+      }
       onClose();
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Failed to start generation');
@@ -115,10 +128,12 @@ export const CustomReelModal: React.FC<Props> = ({
         <div className="flex items-center justify-between">
           <div>
             <h2 id="custom-reel-title" className="text-lg font-semibold text-zinc-100">
-              Create Custom Reel
+              {topic ? 'Configure & Generate Reel' : 'Create Custom Reel'}
             </h2>
             <p className="mt-0.5 text-xs text-zinc-400">
-              Enter a prompt, developer tip, or paste a blog/GitHub release URL.
+              {topic
+                ? 'Choose your voiceover voice, Script LLM, and audio options before generating.'
+                : 'Enter a prompt, developer tip, or paste a blog/GitHub release URL.'}
             </p>
           </div>
           <button
@@ -135,49 +150,66 @@ export const CustomReelModal: React.FC<Props> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-300">
-              Topic Prompt or Developer Tip
-            </label>
-            <textarea
-              rows={3}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Example: Compare Claude Opus 4 vs Gemini 3.8 Flash on SWE-bench Verified and cost per million tokens"
-              className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-400/60 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-300">
-              Reference URL (optional)
-            </label>
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://github.com/... or https://..."
-              className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-400/60 focus:outline-none"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-300">
-                Content Pillar
-              </label>
-              <select
-                value={pillar}
-                onChange={(e) => setPillar(e.target.value as ContentPillar)}
-                className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3 py-2 text-sm text-zinc-100 focus:border-cyan-400/60 focus:outline-none"
-              >
-                {CONTENT_PILLARS.map((p) => (
-                  <option key={p} value={p}>
-                    {PILLAR_LABELS[p]}
-                  </option>
-                ))}
-              </select>
+          {topic ? (
+            <div className="rounded-xl border border-white/10 bg-[#171A24] p-3.5">
+              <div className="flex items-center gap-2">
+                <PillarBadge pillar={topic.pillar} />
+                <span className="font-mono text-[11px] text-zinc-400">{topic.sourceName}</span>
+              </div>
+              <p className="mt-2 text-sm font-semibold text-zinc-100">{topic.title}</p>
+              {topic.summary ? (
+                <p className="mt-1 line-clamp-2 text-xs text-zinc-400">{topic.summary}</p>
+              ) : null}
             </div>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-300">
+                  Topic Prompt or Developer Tip
+                </label>
+                <textarea
+                  rows={3}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Example: Compare Claude Opus 4 vs Gemini 3.8 Flash on SWE-bench Verified and cost per million tokens"
+                  className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-400/60 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-300">
+                  Reference URL (optional)
+                </label>
+                <input
+                  type="url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://github.com/... or https://..."
+                  className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-400/60 focus:outline-none"
+                />
+              </div>
+            </>
+          )}
+
+          <div className={`grid grid-cols-1 gap-4 ${topic ? '' : 'sm:grid-cols-2'}`}>
+            {!topic ? (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-300">
+                  Content Pillar
+                </label>
+                <select
+                  value={pillar}
+                  onChange={(e) => setPillar(e.target.value as ContentPillar)}
+                  className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3 py-2 text-sm text-zinc-100 focus:border-cyan-400/60 focus:outline-none"
+                >
+                  {CONTENT_PILLARS.map((p) => (
+                    <option key={p} value={p}>
+                      {PILLAR_LABELS[p]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
             <div>
               <label className="mb-1.5 block text-xs font-medium text-zinc-300">

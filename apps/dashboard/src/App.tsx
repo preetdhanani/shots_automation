@@ -70,6 +70,7 @@ export const App: React.FC = () => {
   const [checkingGemini, setCheckingGemini] = useState(false);
   const [switchingLlm, setSwitchingLlm] = useState(false);
   const [customModalOpen, setCustomModalOpen] = useState(false);
+  const [selectedTopicForModal, setSelectedTopicForModal] = useState<TopicDto | null>(null);
   const [safeZoneOpen, setSafeZoneOpen] = useState(true);
 
   const [geminiCheck, setGeminiCheck] = useState<GeminiCheckDto | null>(null);
@@ -163,12 +164,14 @@ export const App: React.FC = () => {
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        setSelectedTopicForModal(null);
         setCustomModalOpen(true);
         return;
       }
 
       if (e.key === 'Escape' && customModalOpen) {
         setCustomModalOpen(false);
+        setSelectedTopicForModal(null);
         return;
       }
 
@@ -323,22 +326,9 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleGenerateFromTopic = async (topicId: string) => {
-    try {
-      const res = await apiFetch<{ reel: ReelDto; run: PipelineRunDto }>('/api/reels/generate', {
-        method: 'POST',
-        body: JSON.stringify({ topicId }),
-      });
-      void refreshTopics();
-      void refreshReels();
-      void refreshActiveRuns();
-      navigate({ page: 'run', runId: res.run.id });
-    } catch (err) {
-      pushToast({
-        title: err instanceof Error ? err.message : 'Generation failed',
-        tone: 'error',
-      });
-    }
+  const handleGenerateFromTopic = (topic: TopicDto) => {
+    setSelectedTopicForModal(topic);
+    setCustomModalOpen(true);
   };
 
   const handleDismissTopic = async (topic: TopicDto) => {
@@ -416,7 +406,10 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => setCustomModalOpen(true)}
+            onClick={() => {
+              setSelectedTopicForModal(null);
+              setCustomModalOpen(true);
+            }}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-3.5 py-2.5 text-xs font-semibold text-zinc-950 transition hover:bg-cyan-300"
           >
             <Plus className="h-4 w-4" />
@@ -573,7 +566,10 @@ export const App: React.FC = () => {
             scriptLlmReady={Boolean(llmState?.scriptLlmReady ?? health?.geminiConfigured)}
             ttsReady={Boolean(llmState?.ttsReady ?? health?.geminiConfigured)}
             onFetchLatest={handleFetchTopics}
-            onOpenCustomModal={() => setCustomModalOpen(true)}
+            onOpenCustomModal={() => {
+              setSelectedTopicForModal(null);
+              setCustomModalOpen(true);
+            }}
             onGenerateFromTopic={handleGenerateFromTopic}
             onDismissTopic={handleDismissTopic}
             onGenerateSample={handleGenerateSample}
@@ -662,15 +658,20 @@ export const App: React.FC = () => {
 
       <CustomReelModal
         open={customModalOpen}
+        topic={selectedTopicForModal}
         defaultVoice={health?.settings.defaultVoice ?? 'Puck'}
         defaultMusicEnabled={health?.settings.musicEnabled ?? true}
         llmState={llmState}
         ttsReady={Boolean(llmState?.ttsReady ?? health?.geminiConfigured)}
-        onClose={() => setCustomModalOpen(false)}
+        onClose={() => {
+          setCustomModalOpen(false);
+          setSelectedTopicForModal(null);
+        }}
         onGenerate={async (input: {
-          prompt: string;
-          url: string;
-          pillar: ContentPillar;
+          topicId?: string;
+          prompt?: string;
+          url?: string;
+          pillar?: ContentPillar;
           voiceName: VoiceName;
           musicEnabled: boolean;
           llmEndpointId?: string;
@@ -679,6 +680,9 @@ export const App: React.FC = () => {
             '/api/reels/generate',
             { method: 'POST', body: JSON.stringify(input) },
           );
+          if (input.topicId) {
+            void refreshTopics();
+          }
           void refreshReels();
           void refreshActiveRuns();
           navigate({ page: 'run', runId: res.run.id });
