@@ -9,6 +9,7 @@ import type {
   WorkerSource,
 } from '../db/store.js';
 import { alignStoryboardWithWhisperAnchors, runWhisperAndAlign } from '../generation/aligner.js';
+import { formatApiErrorMessage } from '../generation/geminiClient.js';
 import { resolveActiveLlmEndpoint } from '../generation/llmRegistry.js';
 import { generateStoryboard } from '../generation/scriptGenerator.js';
 import { synthesizeSampleVoiceMacOS, synthesizeVoiceWithGemini } from '../generation/tts.js';
@@ -717,11 +718,7 @@ export class ReelOrchestrator {
     err: unknown,
     signal: AbortSignal,
   ): void {
-    const msg = signal.aborted
-      ? 'Run cancelled by user.'
-      : err instanceof Error
-        ? err.message
-        : String(err);
+    const msg = signal.aborted ? 'Run cancelled by user.' : formatApiErrorMessage(err);
     this.store.updateReel(reelId, {
       status: hadValidVideo ? 'READY_FOR_REVIEW' : 'FAILED',
       errorMessage: signal.aborted && hadValidVideo ? null : msg,

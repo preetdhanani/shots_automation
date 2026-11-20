@@ -295,16 +295,22 @@ export const ApprovalStudioView: React.FC<Props> = ({
     <div className="flex h-full flex-col gap-4">
       {/* Queue Switcher Bar */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {queueReels.map((q) => {
+        {(reel && !queueReels.some((q) => q.id === reel.id) ? [reel, ...queueReels] : queueReels).map((q) => {
           const isSelected = q.id === activeId;
           const badge =
             q.status === 'PUBLISHING'
               ? 'Reconcile'
               : q.status === 'GENERATING'
                 ? 'Building'
-                : q.isSample
-                  ? 'Sample'
-                  : 'Ready';
+                : q.status === 'FAILED'
+                  ? 'Failed'
+                  : q.status === 'PUBLISHED'
+                    ? 'Published'
+                    : q.status === 'REJECTED'
+                      ? 'Rejected'
+                      : q.isSample
+                        ? 'Sample'
+                        : 'Ready';
 
           return (
             <button
@@ -323,7 +329,11 @@ export const ApprovalStudioView: React.FC<Props> = ({
                     ? 'bg-amber-500/20 text-amber-200'
                     : q.status === 'GENERATING'
                       ? 'bg-cyan-500/20 text-cyan-200'
-                      : 'bg-emerald-500/15 text-emerald-300'
+                      : q.status === 'FAILED'
+                        ? 'bg-red-500/20 text-red-200'
+                        : q.status === 'REJECTED'
+                          ? 'bg-zinc-500/20 text-zinc-300'
+                          : 'bg-emerald-500/15 text-emerald-300'
                 }`}
               >
                 {badge}
@@ -525,13 +535,25 @@ export const ApprovalStudioView: React.FC<Props> = ({
                   {/* Primary & Fallback Actions */}
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4">
                     <div className="flex flex-wrap items-center gap-2">
-                      <a
-                        href={`/api/reels/${reel.id}/video?download=1`}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/10"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        Download MP4
-                      </a>
+                      {reel.videoPath ? (
+                        <a
+                          href={`/api/reels/${reel.id}/video?download=1`}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/10"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Download MP4
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          title="Video not rendered yet"
+                          className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs font-medium text-zinc-200 opacity-45"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Download MP4
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={handleCopyCaption}

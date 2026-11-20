@@ -19,7 +19,7 @@ export const ToastStack: React.FC<{
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed right-5 bottom-5 z-50 flex w-full max-w-sm flex-col gap-2.5"
+      className="pointer-events-none fixed top-5 right-5 z-50 flex w-full max-w-sm flex-col gap-2.5"
     >
       {toasts.map((t) => {
         const borderClass =

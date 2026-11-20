@@ -193,8 +193,9 @@ export const PhonePreview: React.FC<Props> = ({
       {/* Compact Timeline Scrubber with Scene Notch Ticks */}
       <div className="w-full max-w-[330px] space-y-1.5">
         <div
-          className="relative h-6 cursor-pointer pt-2"
+          className={`relative h-6 pt-2 ${reel.videoPath ? 'cursor-pointer' : 'cursor-not-allowed opacity-45'}`}
           onClick={(e) => {
+            if (!reel.videoPath) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
             seekToSec(ratio * duration);
@@ -217,6 +218,7 @@ export const PhonePreview: React.FC<Props> = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       seekToSec(scene.startMs / 1000);
+                      setHoveredScene(null);
                     }}
                     onMouseEnter={() => setHoveredScene(`${scene.label} (${formatSec(scene.startMs / 1000)})`)}
                     onMouseLeave={() => setHoveredScene(null)}
@@ -234,24 +236,27 @@ export const PhonePreview: React.FC<Props> = ({
             <button
               type="button"
               onClick={togglePlay}
+              disabled={!reel.videoPath}
               aria-label={playing ? 'Pause' : 'Play'}
-              className="rounded-lg border border-white/10 bg-[#141720] p-1.5 text-zinc-200 transition hover:bg-white/10"
+              className="rounded-lg border border-white/10 bg-[#141720] p-1.5 text-zinc-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
             </button>
             <button
               type="button"
               onClick={() => setMuted((m) => !m)}
+              disabled={!reel.videoPath}
               aria-label={muted ? 'Unmute' : 'Mute'}
-              className="rounded-lg border border-white/10 bg-[#141720] p-1.5 text-zinc-200 transition hover:bg-white/10"
+              className="rounded-lg border border-white/10 bg-[#141720] p-1.5 text-zinc-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
             </button>
             <button
               type="button"
               onClick={() => setLoop((l) => !l)}
+              disabled={!reel.videoPath}
               title="Toggle Loop"
-              className={`rounded-lg border p-1.5 transition ${
+              className={`rounded-lg border p-1.5 transition disabled:cursor-not-allowed disabled:opacity-40 ${
                 loop
                   ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200'
                   : 'border-white/10 bg-[#141720] text-zinc-400'

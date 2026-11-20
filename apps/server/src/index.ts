@@ -57,13 +57,16 @@ async function main(): Promise<void> {
     dashboardDistDir,
   });
 
-  const server = serve({
-    fetch: app.fetch,
-    hostname: '127.0.0.1',
-    port: env.SERVER_PORT,
-  });
-
-  console.log(`Post Reels Studio server listening on http://127.0.0.1:${env.SERVER_PORT}`);
+  const server = serve(
+    {
+      fetch: app.fetch,
+      hostname: '127.0.0.1',
+      port: env.SERVER_PORT,
+    },
+    (info) => {
+      console.log(`Post Reels Studio server listening on http://${info.address}:${info.port}`);
+    },
+  );
 
   const shutdown = () => {
     server.close(() => {

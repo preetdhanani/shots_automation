@@ -57,6 +57,30 @@ export async function withGeminiRetry<T>(
   throw lastError;
 }
 
+export function formatApiErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        error?: { message?: unknown; status?: unknown; code?: unknown };
+        message?: unknown;
+      };
+      if (typeof parsed.error?.message === 'string' && parsed.error.message.trim()) {
+        const status =
+          typeof parsed.error.status === 'string' ? ` (${parsed.error.status})` : '';
+        return `${parsed.error.message.trim()}${status}`;
+      }
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        return parsed.message.trim();
+      }
+    } catch {
+      // Fall through to raw message
+    }
+  }
+  return raw;
+}
+
 export async function checkGeminiHealth(opts: {
   apiKey: string;
   textModel: string;
@@ -74,14 +98,16 @@ export async function checkGeminiHealth(opts: {
 
   try {
     const ai = new GoogleGenAI({ apiKey: opts.apiKey });
-    // Lightweight metadata check (does not consume generation/TTS RPD quota)
+    const aiBeta = new GoogleGenAI({ apiKey: opts.apiKey, apiVersion: 'v1beta' });
+    // Lightweight metadata checks (do not consume generation/TTS RPD quota)
     await ai.models.get({ model: opts.textModel });
+    await aiBeta.models.get({ model: opts.ttsModel });
     return {
       configured: true,
       ok: true,
       textModel: opts.textModel,
       ttsModel: opts.ttsModel,
-      message: `Connected cleanly to Gemini API (${opts.textModel}).`,
+      message: `Connected cleanly to Gemini API (${opts.textModel}, TTS: ${opts.ttsModel}).`,
     };
   } catch (err) {
     return {
@@ -89,7 +115,7 @@ export async function checkGeminiHealth(opts: {
       ok: false,
       textModel: opts.textModel,
       ttsModel: opts.ttsModel,
-      message: err instanceof Error ? err.message : String(err),
+      message: formatApiErrorMessage(err),
     };
   }
 }

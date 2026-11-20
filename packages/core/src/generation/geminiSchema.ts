@@ -360,7 +360,19 @@ export function convertFlatGeminiResponseToStoryboard(
     switch (s.type) {
       case 'hook_title': {
         if (!s.hookTitle) throw new Error(`Scene ${id} missing hookTitle payload`);
-        return { id, type: 'hook_title', narration: s.narration, ...s.hookTitle };
+        const rawStat = s.hookTitle.highlightStat?.trim();
+        const highlightStat = rawStat
+          ? rawStat.length <= 32
+            ? rawStat
+            : rawStat.slice(0, 32).replace(/\s+\S*$/, '').trim() || rawStat.slice(0, 32)
+          : undefined;
+        return {
+          id,
+          type: 'hook_title',
+          narration: s.narration,
+          ...s.hookTitle,
+          highlightStat,
+        };
       }
       case 'benchmark_bars': {
         if (!s.benchmarkBars) throw new Error(`Scene ${id} missing benchmarkBars payload`);
@@ -368,7 +380,17 @@ export function convertFlatGeminiResponseToStoryboard(
       }
       case 'code_compare': {
         if (!s.codeCompare) throw new Error(`Scene ${id} missing codeCompare payload`);
-        return { id, type: 'code_compare', narration: s.narration, ...s.codeCompare };
+        const hasBefore = Boolean(s.codeCompare.beforeCode?.trim());
+        const mode =
+          s.codeCompare.mode === 'before_after' && !hasBefore ? 'single' : s.codeCompare.mode;
+        return {
+          id,
+          type: 'code_compare',
+          narration: s.narration,
+          ...s.codeCompare,
+          mode,
+          beforeCode: hasBefore ? s.codeCompare.beforeCode : undefined,
+        };
       }
       case 'terminal_demo': {
         if (!s.terminalDemo) throw new Error(`Scene ${id} missing terminalDemo payload`);

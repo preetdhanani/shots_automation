@@ -42,7 +42,7 @@ export async function synthesizeVoiceWithGemini(opts: {
   }
   const voice = VoiceNameSchema.parse(opts.voiceName);
   const narrationText = buildFullNarrationText(opts.storyboard);
-  const ai = new GoogleGenAI({ apiKey: opts.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: opts.env.GEMINI_API_KEY, apiVersion: 'v1beta' });
 
   // Pass strictly spoken narration text so the TTS model never speaks director notes aloud
   const response = await withGeminiRetry(
@@ -190,7 +190,7 @@ export async function getOrCreateVoicePreview(
     const tmpDir = `${targetPath}.tmp-dir`;
     fs.mkdirSync(tmpDir, { recursive: true });
     try {
-      const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY, apiVersion: 'v1beta' });
       const response = await withGeminiRetry(() =>
         ai.models.generateContent({
           model: env.GEMINI_TTS_MODEL,

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ExternalLink, RotateCcw, Trash2 } from 'lucide-react';
 import { InstagramIcon } from '../components/InstagramIcon.js';
-import type { ReelDto } from '../api.js';
+import { formatErrorMessage, type ReelDto } from '../api.js';
 import { PillarBadge } from '../components/PillarBadge.js';
 
 interface Props {
@@ -91,7 +91,7 @@ export const LibraryView: React.FC<Props> = ({
                     {reel.title}
                   </h3>
                   <p className="mt-1 line-clamp-2 text-xs text-zinc-400">
-                    {reel.errorMessage || reel.caption}
+                    {formatErrorMessage(reel.errorMessage) || reel.caption}
                   </p>
                 </div>
 

@@ -585,6 +585,15 @@ export const App: React.FC = () => {
             runId={route.runId}
             onRunFinished={handleRunFinished}
             onOpenReview={(reelId) => navigate({ page: 'review', reelId })}
+            onRetryReel={async (reelId) => {
+              const res = await apiFetch<{ run: PipelineRunDto }>(
+                `/api/reels/${encodeURIComponent(reelId)}/retry`,
+                { method: 'POST' },
+              );
+              void refreshReels();
+              void refreshActiveRuns();
+              navigate({ page: 'run', runId: res.run.id });
+            }}
             onBackDiscover={() => navigate({ page: 'discover' })}
           />
         ) : null}

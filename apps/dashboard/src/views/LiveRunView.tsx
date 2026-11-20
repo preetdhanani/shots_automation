@@ -1,18 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Loader2,
+  RotateCcw,
   StopCircle,
   XCircle,
 } from 'lucide-react';
-import { apiFetch, type PipelineRunDto } from '../api.js';
+import { apiFetch, formatErrorMessage, type PipelineRunDto } from '../api.js';
 
 interface Props {
   runId: string;
   onRunFinished: (run: PipelineRunDto) => void;
   onOpenReview: (reelId: string) => void;
+  onRetryReel?: (reelId: string) => void;
   onBackDiscover: () => void;
 }
 
@@ -43,11 +46,13 @@ export const LiveRunView: React.FC<Props> = ({
   runId,
   onRunFinished,
   onOpenReview,
+  onRetryReel,
   onBackDiscover,
 }) => {
   const [run, setRun] = useState<PipelineRunDto | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
 
   useEffect(() => {
@@ -129,6 +134,9 @@ export const LiveRunView: React.FC<Props> = ({
   const steps = isPublish ? PUBLISH_STEPS : GENERATION_STEPS;
   const activeIdx = stepIndexFor(steps, run.currentStep);
   const isTerminal = run.status === 'DONE' || run.status === 'FAILED' || run.status === 'CANCELLED';
+  const lastErrorLog = [...run.logs].reverse().find((l) => l.level === 'error');
+  const lastLogText = formatErrorMessage(run.logs[run.logs.length - 1]?.message ?? '');
+  const failureMessage = formatErrorMessage(lastErrorLog?.message ?? lastLogText);
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
@@ -228,6 +236,16 @@ export const LiveRunView: React.FC<Props> = ({
           })}
         </div>
 
+        {run.status === 'FAILED' && failureMessage ? (
+          <div className="mt-5 flex items-start gap-3 rounded-xl border border-red-500/35 bg-red-500/10 p-4 text-xs text-red-200">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-red-100">Failure Details</p>
+              <p className="mt-1 break-words text-red-200/90">{failureMessage}</p>
+            </div>
+          </div>
+        ) : null}
+
         {isTerminal ? (
           <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-white/10 pt-4">
             <button
@@ -237,7 +255,33 @@ export const LiveRunView: React.FC<Props> = ({
             >
               Back to Discover
             </button>
-            {run.reelId ? (
+            {run.status === 'FAILED' && run.reelId && onRetryReel && !isPublish ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onOpenReview(run.reelId!)}
+                  className="rounded-xl border border-white/12 bg-white/5 px-4 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/10"
+                >
+                  Inspect Draft
+                </button>
+                <button
+                  type="button"
+                  disabled={retrying}
+                  onClick={async () => {
+                    setRetrying(true);
+                    try {
+                      await onRetryReel(run.reelId!);
+                    } finally {
+                      setRetrying(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-400 px-4 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-cyan-300 disabled:opacity-50"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {retrying ? 'Retrying...' : 'Retry Generation'}
+                </button>
+              </>
+            ) : run.reelId ? (
               <button
                 type="button"
                 onClick={() => onOpenReview(run.reelId!)}
@@ -255,14 +299,14 @@ export const LiveRunView: React.FC<Props> = ({
         <button
           type="button"
           onClick={() => setLogsOpen((o) => !o)}
-          className="flex w-full items-center justify-between px-4 py-3 text-xs font-medium text-zinc-300 hover:text-white"
+          className="flex w-full items-center justify-between gap-4 px-4 py-3 text-xs font-medium text-zinc-300 hover:text-white"
         >
-          <span className="flex items-center gap-2">
+          <span className="flex shrink-0 items-center gap-2">
             {logsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             Pipeline Logs ({run.logs.length})
           </span>
-          <span className="font-mono text-[11px] text-zinc-500">
-            {run.logs[run.logs.length - 1]?.message ?? ''}
+          <span className="min-w-0 truncate font-mono text-[11px] text-zinc-500">
+            {lastLogText}
           </span>
         </button>
 

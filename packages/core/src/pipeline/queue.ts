@@ -7,6 +7,7 @@ import type {
   Store,
   WorkerSource,
 } from '../db/store.js';
+import { formatApiErrorMessage } from '../generation/geminiClient.js';
 
 export interface RunStreamEvent {
   seq: number;
@@ -98,7 +99,7 @@ export class PipelineQueue {
         if (controller.signal.aborted) {
           this.finishRun(run.id, 'CANCELLED', 'cancelled', 'Run cancelled by user.');
         } else {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = formatApiErrorMessage(err);
           this.finishRun(run.id, 'FAILED', 'error', msg);
         }
       } finally {
@@ -131,7 +132,7 @@ export class PipelineQueue {
           if (job.controller.signal.aborted) {
             this.finishRun(job.runId, 'CANCELLED', 'cancelled', 'Cancelled by user.');
           } else {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = formatApiErrorMessage(err);
             this.finishRun(job.runId, 'FAILED', 'error', msg);
           }
         } finally {
@@ -202,9 +203,16 @@ export class PipelineQueue {
     step: string,
     message: string,
   ): PipelineRunRecord | null {
+    const existing = this.store.getPipelineRun(runId);
+    const effectiveStep =
+      (status === 'FAILED' && step === 'error' && existing?.currentStep) ||
+      (status === 'CANCELLED' && step === 'cancelled' && existing?.currentStep)
+        ? existing.currentStep
+        : step;
+
     const log: PipelineLogEntry = {
       ts: new Date().toISOString(),
-      step,
+      step: effectiveStep,
       message,
       level: status === 'DONE' ? 'info' : status === 'CANCELLED' ? 'warn' : 'error',
     };
@@ -213,7 +221,7 @@ export class PipelineQueue {
       runId,
       {
         status,
-        currentStep: step,
+        currentStep: effectiveStep,
         progressPct: status === 'DONE' ? 100 : undefined,
         finishedAt: new Date().toISOString(),
       },

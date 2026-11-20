@@ -209,6 +209,30 @@ export interface PublishResultDto {
   message: string;
 }
 
+export function formatErrorMessage(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        error?: { message?: unknown; status?: unknown };
+        message?: unknown;
+      };
+      if (typeof parsed.error?.message === 'string' && parsed.error.message.trim()) {
+        const status =
+          typeof parsed.error.status === 'string' ? ` (${parsed.error.status})` : '';
+        return `${parsed.error.message.trim()}${status}`;
+      }
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        return parsed.message.trim();
+      }
+    } catch {
+      // Fall through to raw string
+    }
+  }
+  return trimmed;
+}
+
 export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
   const headers = new Headers(init.headers);
