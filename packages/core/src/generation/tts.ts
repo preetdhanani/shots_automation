@@ -11,7 +11,7 @@ import {
   type ReelStoryboard,
   type VoiceName,
 } from '../schemas/storyboard.js';
-import { withGeminiRetry } from './geminiClient.js';
+import { createGeminiAbortSignal, withGeminiRetry } from './geminiClient.js';
 
 export interface SynthesizedVoiceResult {
   rawAudioPath: string;
@@ -51,6 +51,7 @@ export async function synthesizeVoiceWithGemini(opts: {
         model: opts.env.GEMINI_TTS_MODEL,
         contents: narrationText,
         config: {
+          abortSignal: createGeminiAbortSignal(opts.signal, 120_000),
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             languageCode: 'en-US',

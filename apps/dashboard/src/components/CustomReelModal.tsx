@@ -27,6 +27,7 @@ interface Props {
     voiceName: VoiceName;
     musicEnabled: boolean;
     llmEndpointId?: string;
+    stayOnPage?: boolean;
   }) => Promise<void>;
   onError: (msg: string) => void;
 }
@@ -68,8 +69,7 @@ export const CustomReelModal: React.FC<Props> = ({
   const scriptReady = Boolean(selectedEndpoint?.configured);
   const canGenerate = scriptReady && ttsReady;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitGeneration = async (stayOnPage: boolean) => {
     if (!topic && !prompt.trim() && !url.trim()) {
       onError('Enter a topic idea or paste an article/GitHub URL.');
       return;
@@ -83,6 +83,7 @@ export const CustomReelModal: React.FC<Props> = ({
           voiceName,
           musicEnabled,
           llmEndpointId: selectedEndpoint?.id,
+          stayOnPage,
         });
       } else {
         await onGenerate({
@@ -92,6 +93,7 @@ export const CustomReelModal: React.FC<Props> = ({
           voiceName,
           musicEnabled,
           llmEndpointId: selectedEndpoint?.id,
+          stayOnPage,
         });
         setPrompt('');
         setUrl('');
@@ -102,6 +104,11 @@ export const CustomReelModal: React.FC<Props> = ({
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitGeneration(false);
   };
 
   const handlePreviewVoice = async () => {
@@ -304,7 +311,7 @@ export const CustomReelModal: React.FC<Props> = ({
             </p>
           ) : null}
 
-          <div className="flex items-center justify-end gap-2.5 pt-2">
+          <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
             <button
               type="button"
               onClick={() => {
@@ -316,12 +323,20 @@ export const CustomReelModal: React.FC<Props> = ({
               Cancel
             </button>
             <button
+              type="button"
+              disabled={submitting || !canGenerate}
+              onClick={() => void submitGeneration(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 px-3.5 py-2 text-sm font-medium text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-50"
+            >
+              {submitting ? 'Queuing...' : 'Queue in Background'}
+            </button>
+            <button
               type="submit"
               disabled={submitting || !canGenerate}
               className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-300 disabled:opacity-50"
             >
               <Sparkles className="h-4 w-4" />
-              {submitting ? 'Starting...' : 'Generate Reel'}
+              {submitting ? 'Starting...' : 'Generate & Watch'}
             </button>
           </div>
         </form>

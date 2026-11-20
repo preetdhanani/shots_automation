@@ -982,17 +982,44 @@ export function createServerApp(deps: ServerAppDeps): Hono {
   });
 
   // Pipeline runs & SSE
+  const enrichRun = (run: PipelineRunRecord) => {
+    const reel = run.reelId ? deps.store.getReel(run.reelId) : null;
+    return {
+      ...run,
+      reelTitle: reel?.title ?? null,
+    };
+  };
+
+  app.get('/api/runs', (c) => {
+    const limitParam = Number.parseInt(c.req.query('limit') ?? '30', 10);
+    const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(100, limitParam)) : 30;
+    const runs = deps.store.listPipelineRuns(limit).map(enrichRun);
+    return c.json({
+      runs,
+      maxConcurrency: deps.queue.getMaxConcurrency(),
+    });
+  });
+
   app.get('/api/runs/active', (c) => {
-    const activeRuns = deps.store.listActivePipelineRuns();
-    const activeRun = activeRuns.find((r) => r.status === 'RUNNING') ?? activeRuns[0] ?? null;
+    const activeRuns = deps.store.listActivePipelineRuns().map(enrichRun);
+    const runningRuns = activeRuns.filter((r) => r.status === 'RUNNING');
+    const queuedOnly = activeRuns.filter((r) => r.status === 'QUEUED');
+    const activeRun = runningRuns[0] ?? activeRuns[0] ?? null;
     const queuedRuns = activeRuns.filter((r) => r.id !== activeRun?.id);
-    return c.json({ activeRun, queuedRuns });
+    return c.json({
+      activeRun,
+      queuedRuns,
+      activeRuns,
+      runningCount: runningRuns.length,
+      queuedCount: queuedOnly.length,
+      maxConcurrency: deps.queue.getMaxConcurrency(),
+    });
   });
 
   app.get('/api/runs/:runId', (c) => {
     const run = deps.store.getPipelineRun(c.req.param('runId'));
     if (!run) return c.json({ error: 'Run not found' }, 404);
-    return c.json({ run });
+    return c.json({ run: enrichRun(run) });
   });
 
   app.post('/api/runs/:runId/cancel', (c) => {

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ContentPillar, VoiceName } from '@post/core/shared';
-import { Archive, CheckSquare, Compass, Loader2, Plus, Settings, Sparkles } from 'lucide-react';
+import { Archive, CheckSquare, Compass, Layers, Loader2, Plus, Settings, Sparkles, X } from 'lucide-react';
 import {
   apiFetch,
   type GeminiCheckDto,
@@ -18,16 +18,21 @@ import { ApprovalStudioView } from './views/ApprovalStudioView.js';
 import { DiscoverView } from './views/DiscoverView.js';
 import { LibraryView } from './views/LibraryView.js';
 import { LiveRunView } from './views/LiveRunView.js';
+import { RunsView } from './views/RunsView.js';
 import { SettingsView } from './views/SettingsView.js';
 
 type RouteState =
   | { page: 'discover' }
+  | { page: 'runs' }
   | { page: 'run'; runId: string }
   | { page: 'review'; reelId: string | null }
   | { page: 'library' }
   | { page: 'settings' };
 
 function parseRoute(pathname: string): RouteState {
+  if (pathname === '/runs' || pathname === '/runs/') {
+    return { page: 'runs' };
+  }
   if (pathname.startsWith('/runs/')) {
     const runId = pathname.slice('/runs/'.length).split('/')[0];
     if (runId) return { page: 'run', runId };
@@ -45,6 +50,8 @@ function routeToPath(route: RouteState): string {
   switch (route.page) {
     case 'discover':
       return '/discover';
+    case 'runs':
+      return '/runs';
     case 'run':
       return `/runs/${encodeURIComponent(route.runId)}`;
     case 'review':
@@ -61,8 +68,8 @@ export const App: React.FC = () => {
   const [health, setHealth] = useState<HealthDto | null>(null);
   const [topics, setTopics] = useState<TopicDto[]>([]);
   const [reels, setReels] = useState<ReelDto[]>([]);
-  const [activeRun, setActiveRun] = useState<PipelineRunDto | null>(null);
-  const [queuedCount, setQueuedCount] = useState(0);
+  const [activeRuns, setActiveRuns] = useState<PipelineRunDto[]>([]);
+  const [maxConcurrency, setMaxConcurrency] = useState(3);
 
   const [topicsLoading, setTopicsLoading] = useState(true);
   const [fetchingTopics, setFetchingTopics] = useState(false);
@@ -135,9 +142,16 @@ export const App: React.FC = () => {
       const res = await apiFetch<{
         activeRun: PipelineRunDto | null;
         queuedRuns: PipelineRunDto[];
+        activeRuns?: PipelineRunDto[];
+        maxConcurrency?: number;
       }>('/api/runs/active');
-      setActiveRun(res.activeRun);
-      setQueuedCount(res.queuedRuns.length);
+      const allActive =
+        res.activeRuns ??
+        [...(res.activeRun ? [res.activeRun] : []), ...(res.queuedRuns ?? [])];
+      setActiveRuns(allActive);
+      if (typeof res.maxConcurrency === 'number') {
+        setMaxConcurrency(res.maxConcurrency);
+      }
     } catch {
       // Ignore poll errors
     }
@@ -145,11 +159,18 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     void Promise.all([refreshHealth(), refreshTopics(), refreshReels(), refreshActiveRuns()]);
+  }, [refreshHealth, refreshTopics, refreshReels, refreshActiveRuns]);
+
+  useEffect(() => {
+    const intervalMs = activeRuns.length > 0 ? 2000 : 4000;
     const timer = setInterval(() => {
       void refreshActiveRuns();
-    }, 4000);
+      if (activeRuns.length > 0) {
+        void refreshReels();
+      }
+    }, intervalMs);
     return () => clearInterval(timer);
-  }, [refreshHealth, refreshTopics, refreshReels, refreshActiveRuns]);
+  }, [activeRuns.length, refreshActiveRuns, refreshReels]);
 
   // Guarded keyboard shortcuts
   useEffect(() => {
@@ -359,6 +380,35 @@ export const App: React.FC = () => {
     navigate({ page: 'review', reelId: null });
   };
 
+  const handleCancelRun = useCallback(
+    async (runId: string) => {
+      try {
+        await apiFetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+        await Promise.all([refreshActiveRuns(), refreshReels(), refreshHealth()]);
+        pushToast({ title: 'Render job cancelled.', tone: 'info' });
+      } catch (err) {
+        pushToast({
+          title: err instanceof Error ? err.message : 'Could not cancel job',
+          tone: 'error',
+        });
+      }
+    },
+    [refreshActiveRuns, refreshReels, refreshHealth, pushToast],
+  );
+
+  const handleRetryReel = useCallback(
+    async (reelId: string) => {
+      const res = await apiFetch<{ run: PipelineRunDto }>(
+        `/api/reels/${encodeURIComponent(reelId)}/retry`,
+        { method: 'POST' },
+      );
+      void refreshReels();
+      void refreshActiveRuns();
+      navigate({ page: 'run', runId: res.run.id });
+    },
+    [refreshReels, refreshActiveRuns, navigate],
+  );
+
   const handleRunFinished = useCallback(
     (run: PipelineRunDto) => {
       void refreshReels();
@@ -421,6 +471,12 @@ export const App: React.FC = () => {
               [
                 { id: 'discover', label: 'Discover', icon: Compass, badge: null },
                 {
+                  id: 'runs',
+                  label: 'Render Queue',
+                  icon: Layers,
+                  badge: activeRuns.length > 0 ? activeRuns.length : null,
+                },
+                {
                   id: 'review',
                   label: 'Review Queue',
                   icon: CheckSquare,
@@ -431,7 +487,8 @@ export const App: React.FC = () => {
               ] as const
             ).map((item) => {
               const Icon = item.icon;
-              const active = route.page === item.id;
+              const active =
+                route.page === item.id || (item.id === 'runs' && route.page === 'run');
               return (
                 <button
                   key={item.id}
@@ -505,24 +562,61 @@ export const App: React.FC = () => {
             </div>
           ) : null}
 
-          {activeRun ? (
-            <button
-              type="button"
-              onClick={() => navigate({ page: 'run', runId: activeRun.id })}
-              className="w-full rounded-xl border border-cyan-400/40 bg-cyan-500/10 p-3 text-left transition hover:bg-cyan-500/15"
-            >
-              <div className="flex items-center justify-between text-xs font-semibold text-cyan-200">
+          {activeRuns.length > 0 ? (
+            <div className="space-y-1.5 rounded-xl border border-cyan-400/35 bg-cyan-500/10 p-2.5">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-cyan-200">
                 <span className="flex items-center gap-1.5">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {activeRun.trigger === 'publish' ? 'Publishing' : 'Rendering'}
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Active Jobs ({activeRuns.length})
                 </span>
-                <span className="font-mono">{activeRun.progressPct}%</span>
+                <button
+                  type="button"
+                  onClick={() => navigate({ page: 'runs' })}
+                  className="text-[10px] text-cyan-300 hover:underline"
+                >
+                  All
+                </button>
               </div>
-              <p className="mt-1 truncate text-[11px] text-zinc-400">
-                {activeRun.currentStep}
-                {queuedCount > 0 ? ` (+${queuedCount} queued)` : ''}
-              </p>
-            </button>
+              <div className="space-y-1.5">
+                {activeRuns.slice(0, 3).map((ar) => (
+                  <div
+                    key={ar.id}
+                    className="flex items-center justify-between gap-1.5 rounded-lg border border-white/10 bg-[#0D1017]/80 px-2 py-1.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => navigate({ page: 'run', runId: ar.id })}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <p className="truncate text-[11px] font-medium text-zinc-100">
+                        {ar.reelTitle || ar.id}
+                      </p>
+                      <p className="truncate font-mono text-[10px] text-zinc-400">
+                        {ar.status === 'QUEUED' ? 'queued' : `${ar.currentStep} · ${ar.progressPct}%`}
+                      </p>
+                    </button>
+                    <button
+                      type="button"
+                      title="Cancel job"
+                      aria-label={`Cancel ${ar.reelTitle || ar.id}`}
+                      onClick={() => void handleCancelRun(ar.id)}
+                      className="shrink-0 rounded p-1 text-zinc-400 transition hover:bg-red-500/20 hover:text-red-300"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+                {activeRuns.length > 3 ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate({ page: 'runs' })}
+                    className="w-full text-center font-mono text-[10px] text-cyan-300 hover:underline"
+                  >
+                    +{activeRuns.length - 3} more in queue
+                  </button>
+                ) : null}
+              </div>
+            </div>
           ) : (
             <button
               type="button"
@@ -576,19 +670,38 @@ export const App: React.FC = () => {
           />
         ) : null}
 
+        {route.page === 'runs' ? (
+          <RunsView
+            activeRuns={activeRuns}
+            maxConcurrency={maxConcurrency}
+            onOpenRun={(runId) => navigate({ page: 'run', runId })}
+            onOpenReview={(reelId) => navigate({ page: 'review', reelId })}
+            onRetryReel={handleRetryReel}
+            onCancelRun={handleCancelRun}
+            onOpenCustomModal={() => {
+              setSelectedTopicForModal(null);
+              setCustomModalOpen(true);
+            }}
+            onBackDiscover={() => navigate({ page: 'discover' })}
+          />
+        ) : null}
+
         {route.page === 'run' ? (
           <LiveRunView
             runId={route.runId}
+            activeRuns={activeRuns}
             onRunFinished={handleRunFinished}
             onOpenReview={(reelId) => navigate({ page: 'review', reelId })}
-            onRetryReel={async (reelId) => {
-              const res = await apiFetch<{ run: PipelineRunDto }>(
-                `/api/reels/${encodeURIComponent(reelId)}/retry`,
-                { method: 'POST' },
-              );
-              void refreshReels();
+            onRetryReel={handleRetryReel}
+            onSelectRun={(runId) => navigate({ page: 'run', runId })}
+            onOpenRuns={() => navigate({ page: 'runs' })}
+            onOpenCustomModal={() => {
+              setSelectedTopicForModal(null);
+              setCustomModalOpen(true);
+            }}
+            onRunCancelled={() => {
               void refreshActiveRuns();
-              navigate({ page: 'run', runId: res.run.id });
+              void refreshReels();
             }}
             onBackDiscover={() => navigate({ page: 'discover' })}
           />
@@ -675,17 +788,27 @@ export const App: React.FC = () => {
           voiceName: VoiceName;
           musicEnabled: boolean;
           llmEndpointId?: string;
+          stayOnPage?: boolean;
         }) => {
+          const { stayOnPage, ...payload } = input;
           const res = await apiFetch<{ reel: ReelDto; run: PipelineRunDto }>(
             '/api/reels/generate',
-            { method: 'POST', body: JSON.stringify(input) },
+            { method: 'POST', body: JSON.stringify(payload) },
           );
-          if (input.topicId) {
+          if (payload.topicId) {
             void refreshTopics();
           }
           void refreshReels();
           void refreshActiveRuns();
-          navigate({ page: 'run', runId: res.run.id });
+          if (stayOnPage) {
+            pushToast({
+              title: `Queued "${res.reel.title}" in background.`,
+              description: 'Track progress or cancel anytime in Render Queue.',
+              tone: 'success',
+            });
+          } else {
+            navigate({ page: 'run', runId: res.run.id });
+          }
         }}
         onError={(msg) => pushToast({ title: msg, tone: 'error' })}
       />

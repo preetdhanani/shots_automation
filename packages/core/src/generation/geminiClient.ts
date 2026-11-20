@@ -18,6 +18,35 @@ function getStatusCode(err: unknown): number | null {
   return m ? Number.parseInt(m[1]!, 10) : null;
 }
 
+export function createGeminiAbortSignal(
+  signal?: AbortSignal,
+  timeoutMs = 120_000,
+): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new Error('Cancelled'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('Cancelled'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (val) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
 export async function withGeminiRetry<T>(
   fn: () => Promise<T>,
   opts: { maxAttempts?: number; signal?: AbortSignal } = {},
@@ -30,9 +59,12 @@ export async function withGeminiRetry<T>(
       throw new Error('Cancelled');
     }
     try {
-      return await fn();
+      return await raceWithAbort(fn(), opts.signal);
     } catch (err) {
       lastError = err;
+      if (opts.signal?.aborted) {
+        throw new Error('Cancelled', { cause: err });
+      }
       const status = getStatusCode(err);
       const retryable = status === 429 || status === 502 || status === 503 || status === 504;
       if (!retryable || attempt === maxAttempts) {

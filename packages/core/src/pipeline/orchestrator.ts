@@ -126,6 +126,7 @@ export class ReelOrchestrator {
       trigger: this.workerSource === 'cli' ? 'daily_cli' : 'manual',
       workerSource: this.workerSource,
       initialStep: 'script',
+      onCancel: () => this.cancelReelStatus(reel.id, false),
       execute: async (runId, signal) => {
         await this.executeFullGeneration({
           runId,
@@ -169,6 +170,7 @@ export class ReelOrchestrator {
       trigger: 'sample',
       workerSource: this.workerSource,
       initialStep: 'tts',
+      onCancel: () => this.cancelReelStatus(reel.id, false),
       execute: async (runId, signal) => {
         await this.executeFullGeneration({
           runId,
@@ -208,6 +210,7 @@ export class ReelOrchestrator {
       trigger: 'rerender',
       workerSource: this.workerSource,
       initialStep: 'align',
+      onCancel: () => this.cancelReelStatus(reelId, hadValidVideo),
       execute: async (runId, signal) => {
         const stagingDir = this.storage.getStagingDir(reelId, runId);
         try {
@@ -291,6 +294,7 @@ export class ReelOrchestrator {
       trigger: 'regenerate_audio',
       workerSource: this.workerSource,
       initialStep: 'tts',
+      onCancel: () => this.cancelReelStatus(reelId, hadValidVideo),
       execute: async (runId, signal) => {
         const stagingDir = this.storage.getStagingDir(reelId, runId);
         try {
@@ -387,6 +391,7 @@ export class ReelOrchestrator {
       trigger: reel.isSample ? 'sample' : 'manual',
       workerSource: this.workerSource,
       initialStep: reel.isSample ? 'tts' : 'script',
+      onCancel: () => this.cancelReelStatus(reelId, this.storage.hasValidFinalVideo(reelId)),
       execute: async (runId, signal) => {
         await this.executeFullGeneration({
           runId,
@@ -710,6 +715,15 @@ export class ReelOrchestrator {
     });
 
     this.queue.finishRun(opts.runId, 'DONE', 'ready', 'Reel rendered and ready for review!');
+  }
+
+  private cancelReelStatus(reelId: string, hadValidVideo: boolean): void {
+    const reel = this.store.getReel(reelId);
+    if (!reel || reel.status !== 'GENERATING') return;
+    this.store.updateReel(reelId, {
+      status: hadValidVideo ? 'READY_FOR_REVIEW' : 'FAILED',
+      errorMessage: hadValidVideo ? null : 'Run cancelled by user.',
+    });
   }
 
   private rollbackReelStatus(

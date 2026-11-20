@@ -87,6 +87,7 @@ export interface PipelineLogDto {
 export interface PipelineRunDto {
   id: string;
   reelId: string | null;
+  reelTitle?: string | null;
   trigger: PipelineTrigger;
   workerSource: 'server' | 'cli';
   workerPid: number | null;

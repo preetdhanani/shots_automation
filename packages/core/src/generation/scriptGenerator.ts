@@ -7,7 +7,7 @@ import {
   type ContentPillar,
   type ReelStoryboard,
 } from '../schemas/storyboard.js';
-import { withGeminiRetry } from './geminiClient.js';
+import { createGeminiAbortSignal, withGeminiRetry } from './geminiClient.js';
 import {
   convertFlatGeminiResponseToStoryboard,
   GEMINI_STORYBOARD_JSON_SCHEMA,
@@ -93,6 +93,7 @@ async function callGeminiStoryboardOnce(
         model,
         contents: userPrompt,
         config: {
+          abortSignal: createGeminiAbortSignal(signal, 120_000),
           systemInstruction: systemPrompt,
           temperature: 0.45,
           maxOutputTokens: 8192,

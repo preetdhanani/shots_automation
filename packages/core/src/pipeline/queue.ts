@@ -20,20 +20,29 @@ interface QueuedRenderJob {
   runId: string;
   controller: AbortController;
   execute: (signal: AbortSignal) => Promise<void>;
+  onCancel?: () => void;
 }
 
 export class PipelineQueue {
   private readonly store: Store;
+  private readonly maxConcurrentRenders: number;
   private readonly emitter = new EventEmitter();
   private readonly controllers = new Map<string, AbortController>();
+  private readonly cancelHandlers = new Map<string, () => void>();
+  private readonly slotReleasers = new Map<string, () => void>();
   private readonly renderQueue: QueuedRenderJob[] = [];
   private readonly runSeqs = new Map<string, number>();
   private readonly lastDbSyncMs = new Map<string, number>();
-  private renderWorkerActive = false;
+  private activeRenderCount = 0;
 
-  constructor(store: Store) {
+  constructor(store: Store, opts?: { maxConcurrentRenders?: number }) {
     this.store = store;
+    this.maxConcurrentRenders = Math.max(1, Math.min(8, opts?.maxConcurrentRenders ?? 3));
     this.emitter.setMaxListeners(100);
+  }
+
+  getMaxConcurrency(): number {
+    return this.maxConcurrentRenders;
   }
 
   private nextSeq(runId: string): number {
@@ -48,6 +57,7 @@ export class PipelineQueue {
     workerSource: WorkerSource;
     initialStep: string;
     execute: (runId: string, signal: AbortSignal) => Promise<void>;
+    onCancel?: () => void;
   }): PipelineRunRecord {
     const run = this.store.createPipelineRun({
       reelId: opts.reelId,
@@ -60,15 +70,19 @@ export class PipelineQueue {
 
     const controller = new AbortController();
     this.controllers.set(run.id, controller);
+    if (opts.onCancel) {
+      this.cancelHandlers.set(run.id, opts.onCancel);
+    }
 
     this.renderQueue.push({
       runId: run.id,
       controller,
       execute: (signal) => opts.execute(run.id, signal),
+      onCancel: opts.onCancel,
     });
 
     this.emitSnapshot(run.id, 'snapshot');
-    void this.drainRenderQueue();
+    this.drainRenderQueue();
     return run;
   }
 
@@ -78,6 +92,7 @@ export class PipelineQueue {
     workerSource: WorkerSource;
     initialStep: string;
     execute: (runId: string, signal: AbortSignal) => Promise<void>;
+    onCancel?: () => void;
   }): PipelineRunRecord {
     const run = this.store.createPipelineRun({
       reelId: opts.reelId,
@@ -90,6 +105,9 @@ export class PipelineQueue {
 
     const controller = new AbortController();
     this.controllers.set(run.id, controller);
+    if (opts.onCancel) {
+      this.cancelHandlers.set(run.id, opts.onCancel);
+    }
     this.emitSnapshot(run.id, 'snapshot');
 
     void (async () => {
@@ -104,44 +122,54 @@ export class PipelineQueue {
         }
       } finally {
         this.controllers.delete(run.id);
+        this.cancelHandlers.delete(run.id);
       }
     })();
 
     return run;
   }
 
-  private async drainRenderQueue(): Promise<void> {
-    if (this.renderWorkerActive) return;
-    this.renderWorkerActive = true;
+  private drainRenderQueue(): void {
+    while (this.activeRenderCount < this.maxConcurrentRenders && this.renderQueue.length > 0) {
+      const job = this.renderQueue.shift()!;
+      if (job.controller.signal.aborted) {
+        this.finishRun(job.runId, 'CANCELLED', 'cancelled', 'Queued job cancelled before start.');
+        this.controllers.delete(job.runId);
+        this.cancelHandlers.delete(job.runId);
+        continue;
+      }
 
-    try {
-      while (this.renderQueue.length > 0) {
-        const job = this.renderQueue.shift()!;
-        if (job.controller.signal.aborted) {
-          this.finishRun(job.runId, 'CANCELLED', 'cancelled', 'Queued job cancelled before start.');
-          this.controllers.delete(job.runId);
-          continue;
-        }
+      this.activeRenderCount++;
+      let slotReleased = false;
+      const releaseSlot = () => {
+        if (slotReleased) return;
+        slotReleased = true;
+        this.activeRenderCount = Math.max(0, this.activeRenderCount - 1);
+        this.slotReleasers.delete(job.runId);
+        this.drainRenderQueue();
+      };
+      this.slotReleasers.set(job.runId, releaseSlot);
 
-        this.store.updatePipelineRun(job.runId, { status: 'RUNNING', progressPct: 2 });
-        this.emitSnapshot(job.runId, 'progress');
+      this.store.updatePipelineRun(job.runId, { status: 'RUNNING', progressPct: 2 });
+      this.emitSnapshot(job.runId, 'progress');
 
+      void (async () => {
         try {
           await job.execute(job.controller.signal);
         } catch (err) {
           if (job.controller.signal.aborted) {
-            this.finishRun(job.runId, 'CANCELLED', 'cancelled', 'Cancelled by user.');
+            this.finishRun(job.runId, 'CANCELLED', 'cancelled', 'Run cancelled by user.');
           } else {
             const msg = formatApiErrorMessage(err);
             this.finishRun(job.runId, 'FAILED', 'error', msg);
           }
         } finally {
           this.controllers.delete(job.runId);
+          this.cancelHandlers.delete(job.runId);
           this.lastDbSyncMs.delete(job.runId);
+          releaseSlot();
         }
-      }
-    } finally {
-      this.renderWorkerActive = false;
+      })();
     }
   }
 
@@ -204,6 +232,12 @@ export class PipelineQueue {
     message: string,
   ): PipelineRunRecord | null {
     const existing = this.store.getPipelineRun(runId);
+    if (
+      existing &&
+      (existing.status === 'DONE' || existing.status === 'FAILED' || existing.status === 'CANCELLED')
+    ) {
+      return existing;
+    }
     const effectiveStep =
       (status === 'FAILED' && step === 'error' && existing?.currentStep) ||
       (status === 'CANCELLED' && step === 'cancelled' && existing?.currentStep)
@@ -247,17 +281,36 @@ export class PipelineQueue {
       return false;
     }
 
+    // Remove from pending queue if still queued
+    const queueIdx = this.renderQueue.findIndex((j) => j.runId === runId);
+    if (queueIdx >= 0) {
+      this.renderQueue.splice(queueIdx, 1);
+    }
+
     const controller = this.controllers.get(runId);
     if (controller) {
       controller.abort();
-      if (run.status === 'QUEUED') {
-        this.finishRun(runId, 'CANCELLED', 'cancelled', 'Queued run cancelled before execution.');
-      }
-      return true;
+      this.controllers.delete(runId);
     }
 
-    // Orphaned DB row with no live controller
-    this.finishRun(runId, 'CANCELLED', 'cancelled', 'Run marked cancelled.');
+    const onCancel = this.cancelHandlers.get(runId);
+    if (onCancel) {
+      this.cancelHandlers.delete(runId);
+      try {
+        onCancel();
+      } catch {
+        // Ignore cleanup errors during cancel
+      }
+    }
+
+    // Immediately mark CANCELLED and emit SSE so UI updates instantaneously
+    this.finishRun(runId, 'CANCELLED', 'cancelled', 'Run cancelled by user.');
+
+    // Immediately free concurrency slot so queued jobs can proceed without waiting for a stuck call
+    const releaseSlot = this.slotReleasers.get(runId);
+    if (releaseSlot) {
+      releaseSlot();
+    }
     return true;
   }
 

@@ -4,7 +4,9 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Layers,
   Loader2,
+  Plus,
   RotateCcw,
   StopCircle,
   XCircle,
@@ -13,9 +15,14 @@ import { apiFetch, formatErrorMessage, type PipelineRunDto } from '../api.js';
 
 interface Props {
   runId: string;
+  activeRuns?: PipelineRunDto[];
   onRunFinished: (run: PipelineRunDto) => void;
   onOpenReview: (reelId: string) => void;
   onRetryReel?: (reelId: string) => void;
+  onSelectRun?: (runId: string) => void;
+  onOpenRuns?: () => void;
+  onOpenCustomModal?: () => void;
+  onRunCancelled?: () => void;
   onBackDiscover: () => void;
 }
 
@@ -44,9 +51,14 @@ function stepIndexFor(steps: Array<{ key: string }>, currentStep: string): numbe
 
 export const LiveRunView: React.FC<Props> = ({
   runId,
+  activeRuns = [],
   onRunFinished,
   onOpenReview,
   onRetryReel,
+  onSelectRun,
+  onOpenRuns,
+  onOpenCustomModal,
+  onRunCancelled,
   onBackDiscover,
 }) => {
   const [run, setRun] = useState<PipelineRunDto | null>(null);
@@ -116,6 +128,17 @@ export const LiveRunView: React.FC<Props> = ({
     setCancelling(true);
     try {
       await apiFetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+      onRunCancelled?.();
+    } catch {
+      // Refresh current state if already terminal
+      try {
+        const res = await apiFetch<{ run: PipelineRunDto }>(
+          `/api/runs/${encodeURIComponent(runId)}`,
+        );
+        setRun(res.run);
+      } catch {
+        // Ignore
+      }
     } finally {
       setCancelling(false);
     }
@@ -140,6 +163,55 @@ export const LiveRunView: React.FC<Props> = ({
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
+      {/* Multi-run switcher bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          {onOpenRuns ? (
+            <button
+              type="button"
+              onClick={onOpenRuns}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-white/10 bg-[#11131B] px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:bg-white/5 hover:text-white"
+            >
+              <Layers className="h-3.5 w-3.5 text-cyan-300" />
+              All Jobs ({activeRuns.length})
+            </button>
+          ) : null}
+          {activeRuns.length > 1 && onSelectRun
+            ? activeRuns.map((ar) => {
+                const selected = ar.id === runId;
+                return (
+                  <button
+                    key={ar.id}
+                    type="button"
+                    onClick={() => onSelectRun(ar.id)}
+                    className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-1.5 text-xs transition ${
+                      selected
+                        ? 'border-cyan-400/55 bg-cyan-500/15 text-zinc-100'
+                        : 'border-white/10 bg-[#11131B] text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <span className="max-w-[160px] truncate font-medium">
+                      {ar.reelTitle || ar.id}
+                    </span>
+                    <span className="font-mono text-[10px] text-cyan-300">{ar.progressPct}%</span>
+                  </button>
+                );
+              })
+            : null}
+        </div>
+
+        {onOpenCustomModal ? (
+          <button
+            type="button"
+            onClick={onOpenCustomModal}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-cyan-400/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/20"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Queue Another Reel
+          </button>
+        ) : null}
+      </div>
+
       <div className="rounded-2xl border border-white/12 bg-[#11131B] p-6 shadow-2xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>

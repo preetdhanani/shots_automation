@@ -254,6 +254,7 @@ export interface Store {
   }): PipelineRunRecord;
   getPipelineRun(id: string): PipelineRunRecord | null;
   listActivePipelineRuns(): PipelineRunRecord[];
+  listPipelineRuns(limit?: number): PipelineRunRecord[];
   getLatestRunForReel(reelId: string): PipelineRunRecord | null;
   updatePipelineRun(
     id: string,
@@ -976,6 +977,14 @@ export class SqliteStore implements Store {
         "SELECT * FROM pipeline_runs WHERE status IN ('QUEUED', 'RUNNING') ORDER BY started_at ASC",
       )
       .all() as Record<string, unknown>[];
+    return rows.map((r) => this.mapPipelineRunRow(r));
+  }
+
+  listPipelineRuns(limit = 30): PipelineRunRecord[] {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    const rows = this.db
+      .prepare('SELECT * FROM pipeline_runs ORDER BY started_at DESC LIMIT ?')
+      .all(safeLimit) as Record<string, unknown>[];
     return rows.map((r) => this.mapPipelineRunRow(r));
   }
 
