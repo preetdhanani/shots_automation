@@ -1,0 +1,426 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import type { VideoSpecReport } from '../schemas/media.js';
+import { runSubprocess } from './subprocess.js';
+
+export type DetectedAudioInput =
+  | { kind: 'container' }
+  | { kind: 'pcm'; sampleRate: number; channels: number };
+
+export function detectGeminiAudioInput(bytes: Buffer, mimeType?: string): DetectedAudioInput {
+  if (bytes.byteLength >= 4) {
+    const head = bytes.subarray(0, 4).toString('ascii');
+    if (head === 'RIFF' || head === 'OggS' || head === 'fLaC' || head.startsWith('ID3')) {
+      return { kind: 'container' };
+    }
+    if (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0) {
+      return { kind: 'container' };
+    }
+  }
+
+  const lower = (mimeType ?? '').toLowerCase();
+  if (lower.includes('l16') || lower.includes('pcm') || lower === '') {
+    const rateMatch = lower.match(/rate=(\d+)/);
+    const channelsMatch = lower.match(/channels=(\d+)/);
+    return {
+      kind: 'pcm',
+      sampleRate: rateMatch ? Number.parseInt(rateMatch[1]!, 10) : 24000,
+      channels: channelsMatch ? Number.parseInt(channelsMatch[1]!, 10) : 1,
+    };
+  }
+
+  return { kind: 'container' };
+}
+
+export async function checkFfmpegAvailability(): Promise<{
+  ffmpegOk: boolean;
+  ffprobeOk: boolean;
+  ffmpegVersion: string | null;
+}> {
+  try {
+    const [ff, fp] = await Promise.all([
+      runSubprocess('ffmpeg', ['-version'], { timeoutMs: 5000 }),
+      runSubprocess('ffprobe', ['-version'], { timeoutMs: 5000 }),
+    ]);
+    const firstLine = ff.stdout.split('\n')[0]?.trim() ?? 'ffmpeg available';
+    return {
+      ffmpegOk: ff.code === 0,
+      ffprobeOk: fp.code === 0,
+      ffmpegVersion: firstLine,
+    };
+  } catch {
+    return { ffmpegOk: false, ffprobeOk: false, ffmpegVersion: null };
+  }
+}
+
+export async function getAudioDurationMs(audioPath: string, signal?: AbortSignal): Promise<number> {
+  const res = await runSubprocess(
+    'ffprobe',
+    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', audioPath],
+    { signal, timeoutMs: 15_000 },
+  );
+  const parsed = JSON.parse(res.stdout) as { format?: { duration?: string } };
+  const sec = Number.parseFloat(parsed.format?.duration ?? '0');
+  if (!Number.isFinite(sec) || sec <= 0) {
+    throw new Error(`Invalid audio duration probed from ${audioPath}`);
+  }
+  return Math.round(sec * 1000);
+}
+
+interface LoudnormStats {
+  input_i: string;
+  input_tp: string;
+  input_lra: string;
+  input_thresh: string;
+  target_offset: string;
+}
+
+function parseLoudnormStats(stderr: string): LoudnormStats | null {
+  const matches = stderr.match(/\{[\s\S]*?"input_i"[\s\S]*?\}/g);
+  if (!matches || matches.length === 0) return null;
+  try {
+    const stats = JSON.parse(matches[matches.length - 1]!) as LoudnormStats;
+    const vals = [
+      stats.input_i,
+      stats.input_tp,
+      stats.input_lra,
+      stats.input_thresh,
+      stats.target_offset,
+    ];
+    if (vals.some((v) => !v || v.includes('inf') || Number.isNaN(Number.parseFloat(v)))) {
+      return null;
+    }
+    return stats;
+  } catch {
+    return null;
+  }
+}
+
+export async function prepareNormalizedVoicePair(opts: {
+  rawAudioPath: string;
+  rawBytes: Buffer;
+  mimeType?: string;
+  trimmedMasterPath: string;
+  output48kPath: string;
+  output16kPath: string;
+  signal?: AbortSignal;
+}): Promise<{ durationMs: number }> {
+  const detected = detectGeminiAudioInput(opts.rawBytes, opts.mimeType);
+  const inputArgs =
+    detected.kind === 'pcm'
+      ? ['-f', 's16le', '-ar', String(detected.sampleRate), '-ac', String(detected.channels), '-i', opts.rawAudioPath]
+      : ['-i', opts.rawAudioPath];
+
+  // Step 1: Trim only leading & trailing silence once and add clean 120ms head/tail breathing room
+  await runSubprocess(
+    'ffmpeg',
+    [
+      '-y',
+      ...inputArgs,
+      '-af',
+      'silenceremove=start_periods=1:start_duration=0.04:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_duration=0.04:start_threshold=-45dB,areverse,adelay=120|120,apad=pad_dur=0.12',
+      '-ar',
+      '48000',
+      '-ac',
+      '2',
+      '-c:a',
+      'pcm_s16le',
+      opts.trimmedMasterPath,
+    ],
+    { signal: opts.signal, timeoutMs: 60_000 },
+  );
+
+  // Step 2: Two-pass loudnorm into 48kHz stereo WAV for delivery video mix
+  const pass1 = await runSubprocess(
+    'ffmpeg',
+    [
+      '-y',
+      '-i',
+      opts.trimmedMasterPath,
+      '-af',
+      'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json',
+      '-f',
+      'null',
+      '-',
+    ],
+    { signal: opts.signal, timeoutMs: 60_000 },
+  );
+
+  const stats = parseLoudnormStats(pass1.stderr);
+  const loudnormFilter = stats
+    ? `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`
+    : 'loudnorm=I=-14:TP=-1.5:LRA=11';
+
+  await runSubprocess(
+    'ffmpeg',
+    [
+      '-y',
+      '-i',
+      opts.trimmedMasterPath,
+      '-af',
+      loudnormFilter,
+      '-ar',
+      '48000',
+      '-ac',
+      '2',
+      '-c:a',
+      'pcm_s16le',
+      opts.output48kPath,
+    ],
+    { signal: opts.signal, timeoutMs: 60_000 },
+  );
+
+  // Step 3: Derive 16kHz mono WAV from the identical trimmed master so timestamps match voice-48k.wav
+  await runSubprocess(
+    'ffmpeg',
+    [
+      '-y',
+      '-i',
+      opts.trimmedMasterPath,
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-c:a',
+      'pcm_s16le',
+      opts.output16kPath,
+    ],
+    { signal: opts.signal, timeoutMs: 60_000 },
+  );
+
+  const durationMs = await getAudioDurationMs(opts.output48kPath, opts.signal);
+  return { durationMs };
+}
+
+export interface DeliveryEncodeOptions {
+  rawVideoPath: string;
+  voice48kPath: string;
+  outputMp4Path: string;
+  durationSec: number;
+  musicEnabled: boolean;
+  musicPath?: string;
+  musicVolumeDb?: number;
+  transitionClickPath?: string;
+  transitionOffsetsMs?: number[];
+  signal?: AbortSignal;
+}
+
+export function buildDeliveryFfmpegArgs(opts: DeliveryEncodeOptions): string[] {
+  const args: string[] = ['-y', '-i', opts.rawVideoPath, '-i', opts.voice48kPath];
+
+  const filterParts: string[] = ['[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[voice]'];
+  const mixLabels: string[] = ['[voice]'];
+  let nextInputIdx = 2;
+
+  if (opts.musicEnabled && opts.musicPath && fs.existsSync(opts.musicPath)) {
+    args.push('-stream_loop', '-1', '-i', opts.musicPath);
+    const volDb = opts.musicVolumeDb ?? -22;
+    const fadeStart = Math.max(0.2, opts.durationSec - 0.8).toFixed(2);
+    filterParts.push(
+      `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${volDb}dB,atrim=0:${opts.durationSec.toFixed(3)},afade=t=in:st=0:d=0.35,afade=t=out:st=${fadeStart}:d=0.75[bgm]`,
+    );
+    mixLabels.push('[bgm]');
+    nextInputIdx++;
+  }
+
+  const validClicks = (opts.transitionOffsetsMs ?? []).filter((ms) => ms > 150 && ms < opts.durationSec * 1000 - 150);
+  if (opts.transitionClickPath && fs.existsSync(opts.transitionClickPath) && validClicks.length > 0) {
+    for (const offsetMs of validClicks) {
+      args.push('-i', opts.transitionClickPath);
+      const label = `click_${nextInputIdx}`;
+      filterParts.push(
+        `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=-16dB,adelay=${Math.round(offsetMs)}|${Math.round(offsetMs)}[${label}]`,
+      );
+      mixLabels.push(`[${label}]`);
+      nextInputIdx++;
+    }
+  }
+
+  if (mixLabels.length === 1) {
+    filterParts.push('[voice]anull[aout]');
+  } else {
+    filterParts.push(
+      `${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:normalize=0,alimiter=limit=0.95[aout]`,
+    );
+  }
+
+  args.push(
+    '-filter_complex',
+    filterParts.join(';'),
+    '-map',
+    '0:v:0',
+    '-map',
+    '[aout]',
+    '-vf',
+    'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'medium',
+    '-crf',
+    '19',
+    '-profile:v',
+    'high',
+    '-level:v',
+    '4.1',
+    '-pix_fmt',
+    'yuv420p',
+    '-flags',
+    '+cgop',
+    '-x264-params',
+    'open-gop=0:keyint=60:min-keyint=60:scenecut=0',
+    '-maxrate',
+    '12M',
+    '-bufsize',
+    '24M',
+    '-c:a',
+    'aac',
+    '-profile:a',
+    'aac_low',
+    '-ar',
+    '48000',
+    '-ac',
+    '2',
+    '-b:a',
+    '128k',
+    '-movflags',
+    '+faststart',
+    '-shortest',
+    opts.outputMp4Path,
+  );
+
+  return args;
+}
+
+export async function encodeDeliveryReel(opts: DeliveryEncodeOptions): Promise<void> {
+  const tmpOut = `${opts.outputMp4Path}.tmp.mp4`;
+  const args = buildDeliveryFfmpegArgs({ ...opts, outputMp4Path: tmpOut });
+  try {
+    await runSubprocess('ffmpeg', args, { signal: opts.signal, timeoutMs: 240_000 });
+    fs.renameSync(tmpOut, opts.outputMp4Path);
+  } finally {
+    if (fs.existsSync(tmpOut)) {
+      fs.rmSync(tmpOut, { force: true });
+    }
+  }
+}
+
+export async function extractCoverFrame(
+  videoPath: string,
+  coverJpgPath: string,
+  offsetSec = 0.8,
+  signal?: AbortSignal,
+): Promise<void> {
+  const tmpOut = `${coverJpgPath}.tmp.jpg`;
+  fs.mkdirSync(path.dirname(coverJpgPath), { recursive: true });
+  try {
+    await runSubprocess(
+      'ffmpeg',
+      ['-y', '-ss', offsetSec.toFixed(2), '-i', videoPath, '-frames:v', '1', '-q:v', '2', tmpOut],
+      { signal, timeoutMs: 30_000 },
+    );
+    fs.renameSync(tmpOut, coverJpgPath);
+  } finally {
+    if (fs.existsSync(tmpOut)) {
+      fs.rmSync(tmpOut, { force: true });
+    }
+  }
+}
+
+function parseFrameRate(raw: string | undefined): number {
+  if (!raw) return 0;
+  const parts = raw.split('/');
+  if (parts.length === 2) {
+    const num = Number.parseFloat(parts[0]!);
+    const den = Number.parseFloat(parts[1]!);
+    if (den > 0 && Number.isFinite(num / den)) {
+      return Math.round((num / den) * 100) / 100;
+    }
+  }
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function verifyInstagramReelSpec(report: Omit<VideoSpecReport, 'ok' | 'errors'>): VideoSpecReport {
+  const errors: string[] = [];
+
+  if (report.width !== 1080 || report.height !== 1920) {
+    errors.push(`Resolution must be 1080x1920, got ${report.width}x${report.height}.`);
+  }
+  if (report.fps < 29 || report.fps > 31) {
+    errors.push(`Frame rate must be ~30fps (29-31), got ${report.fps}.`);
+  }
+  if (report.videoCodec !== 'h264') {
+    errors.push(`Video codec must be h264, got ${report.videoCodec}.`);
+  }
+  if (report.pixelFormat !== 'yuv420p') {
+    errors.push(`Pixel format must be yuv420p, got ${report.pixelFormat}.`);
+  }
+  if (report.audioCodec !== 'aac') {
+    errors.push(`Audio codec must be aac, got ${report.audioCodec}.`);
+  }
+  if (report.audioSampleRate !== 48000) {
+    errors.push(`Audio sample rate must be 48000 Hz, got ${report.audioSampleRate}.`);
+  }
+  if (report.audioChannels !== 2) {
+    errors.push(`Audio channels must be 2 (stereo), got ${report.audioChannels}.`);
+  }
+  if (report.durationSec < 3 || report.durationSec > 90) {
+    errors.push(`Reel duration must be 3-90 seconds, got ${report.durationSec.toFixed(1)}s.`);
+  }
+  if (report.fileSizeBytes <= 10_000 || report.fileSizeBytes > 100 * 1024 * 1024) {
+    errors.push(`File size out of Meta bounds: ${report.fileSizeBytes} bytes.`);
+  }
+  if (report.bitrateKbps > 25_000) {
+    errors.push(`Bitrate ${report.bitrateKbps} kbps exceeds 25,000 kbps Reels limit.`);
+  }
+
+  return {
+    ...report,
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+export async function probeVideo(videoPath: string, signal?: AbortSignal): Promise<VideoSpecReport> {
+  const stat = fs.statSync(videoPath);
+  const res = await runSubprocess(
+    'ffprobe',
+    ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', videoPath],
+    { signal, timeoutMs: 20_000 },
+  );
+
+  const parsed = JSON.parse(res.stdout) as {
+    format?: { duration?: string; bit_rate?: string };
+    streams?: Array<{
+      codec_type?: string;
+      codec_name?: string;
+      pix_fmt?: string;
+      width?: number;
+      height?: number;
+      r_frame_rate?: string;
+      avg_frame_rate?: string;
+      sample_rate?: string;
+      channels?: number;
+    }>;
+  };
+
+  const vStream = parsed.streams?.find((s) => s.codec_type === 'video');
+  const aStream = parsed.streams?.find((s) => s.codec_type === 'audio');
+  const durationSec = Number.parseFloat(parsed.format?.duration ?? '0') || 0;
+  const bitrateBps = Number.parseFloat(parsed.format?.bit_rate ?? '0') || 0;
+
+  return verifyInstagramReelSpec({
+    width: vStream?.width ?? 0,
+    height: vStream?.height ?? 0,
+    fps: parseFrameRate(vStream?.avg_frame_rate || vStream?.r_frame_rate),
+    durationSec: Math.round(durationSec * 100) / 100,
+    fileSizeBytes: stat.size,
+    videoCodec: vStream?.codec_name ?? 'unknown',
+    pixelFormat: vStream?.pix_fmt ?? 'unknown',
+    audioCodec: aStream?.codec_name ?? 'none',
+    audioSampleRate: Number.parseInt(aStream?.sample_rate ?? '0', 10) || 0,
+    audioChannels: aStream?.channels ?? 0,
+    bitrateKbps: Math.round(bitrateBps / 1000),
+  });
+}

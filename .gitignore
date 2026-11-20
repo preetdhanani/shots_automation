@@ -1,0 +1,17 @@
+# Dependencies & build output
+node_modules/
+**/dist/
+*.tsbuildinfo
+
+# Secrets & local runtime data
+.env
+.env.local
+data/
+.cache/
+whisper.cpp/
+tmp.json
+
+# OS & logs
+.DS_Store
+*.log
+npm-debug.log*

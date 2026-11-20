@@ -1,0 +1,37 @@
+{
+  "name": "post-reels-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run build:core && concurrently -n server,web -c cyan,green \"npm -w @post/server run dev\" \"npm -w @post/dashboard run dev\"",
+    "build:core": "npm -w @post/core run build",
+    "build": "npm -w @post/core run build && npm -w @post/video run build && npm -w @post/server run build && npm -w @post/dashboard run build",
+    "start": "npm -w @post/server run start",
+    "reel": "tsx --conditions=development apps/server/src/cli.ts",
+    "studio": "npm -w @post/video run studio",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/video/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json && tsc --noEmit -p apps/dashboard/tsconfig.json",
+    "test": "vitest run",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.6",
+    "concurrently": "^10.0.7",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^5.1.1"
+  }
+}
