@@ -7,6 +7,7 @@ import {
   type ReelStyle,
   type VoiceName,
 } from '../schemas/storyboard.js';
+import { repairSceneEmphasis } from './emphasis.js';
 import type { ReelFingerprint } from './fingerprint.js';
 import { REEL_FORMATS } from './formats.js';
 import {
@@ -234,14 +235,29 @@ export function applyVisualPlan(
     if (opts.preserveExisting && existing?.layout && isValidLayout(scene.type, existing.layout)) {
       layout = existing.layout;
     } else if (isChannelOutroScene(scene)) {
-      layout = availableLayouts[idx % availableLayouts.length] ?? availableLayouts[0]!;
+      const prevCtaLayout = usedLayoutsByType.get('takeaway_cta')?.[0];
+      layout =
+        availableLayouts.find((candidate) => candidate !== prevCtaLayout) ??
+        availableLayouts[idx % availableLayouts.length] ??
+        availableLayouts[0]!;
     } else {
       const recentForType = [
         ...(usedLayoutsByType.get(scene.type) ?? []),
         ...recentLayoutsForSceneType(opts.history, scene.type, 3),
       ];
+      let excludeLayouts: string[] | undefined;
+      let baseWeights: Partial<Record<string, number>> | undefined;
+      if (scene.type === 'code_compare') {
+        if (scene.mode === 'single') {
+          excludeLayouts = ['diff'];
+        } else if (scene.mode === 'before_after') {
+          baseWeights = { stacked: 1.25, diff: 1.25, focus: 0.45 };
+        }
+      }
       layout = pickWithRecency(availableLayouts, recentForType, rng, {
         hardBlockLast: availableLayouts.length > 1 ? 1 : 0,
+        exclude: excludeLayouts,
+        baseWeights,
       });
     }
     usedLayoutsByType.set(scene.type, [layout, ...(usedLayoutsByType.get(scene.type) ?? [])]);
@@ -277,15 +293,14 @@ export function applyVisualPlan(
     }
     prevCamera = camera;
 
+    const repairedEmphasis = repairSceneEmphasis(scene);
     return {
       ...scene,
       visual: {
         layout,
         transition,
         camera,
-        ...(existing?.emphasis && existing.emphasis.length > 0
-          ? { emphasis: existing.emphasis }
-          : {}),
+        ...(repairedEmphasis && repairedEmphasis.length > 0 ? { emphasis: repairedEmphasis } : {}),
       },
     };
   });

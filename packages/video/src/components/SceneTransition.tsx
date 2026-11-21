@@ -6,6 +6,7 @@ interface SceneTransitionProps {
   transition: TransitionId;
   camera: CameraMoveId;
   durationInFrames: number;
+  isFirst?: boolean;
   isLast: boolean;
   children: React.ReactNode;
 }
@@ -14,6 +15,7 @@ export const SceneTransition: React.FC<SceneTransitionProps> = ({
   transition,
   camera,
   durationInFrames,
+  isFirst = false,
   isLast,
   children,
 }) => {
@@ -31,8 +33,17 @@ export const SceneTransition: React.FC<SceneTransitionProps> = ({
     config: { damping: 16, stiffness: 170 },
   });
 
-  const fadeOut =
-    isLast || durationInFrames <= 8
+  const closeProgress =
+    isLast && durationInFrames > 18
+      ? interpolate(frame, [durationInFrames - 12, durationInFrames - 1], [0, 1], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        })
+      : 0;
+
+  const fadeOut = isLast
+    ? 1 - closeProgress
+    : durationInFrames <= 8
       ? 1
       : interpolate(frame, [durationInFrames - 4, durationInFrames], [1, 0.18], {
           extrapolateLeft: 'clamp',
@@ -67,67 +78,79 @@ export const SceneTransition: React.FC<SceneTransitionProps> = ({
   let opacity = fadeOut;
   let tx = camX;
   let ty = 0;
-  let scale = camScale;
+  let scale = camScale * (1 - closeProgress * 0.025);
   let clipPath: string | undefined;
   let filter: string | undefined;
 
-  switch (transition) {
-    case 'slide_left': {
-      tx += interpolate(enterSpring, [0, 1], [160, 0]);
-      opacity = Math.min(1, enterProgress * 1.4) * fadeOut;
-      break;
-    }
-    case 'slide_up': {
-      ty += interpolate(enterSpring, [0, 1], [130, 0]);
-      opacity = Math.min(1, enterProgress * 1.4) * fadeOut;
-      break;
-    }
-    case 'zoom_punch': {
-      scale *= interpolate(enterSpring, [0, 1], [0.82, 1]);
-      opacity = Math.min(1, enterProgress * 1.5) * fadeOut;
-      break;
-    }
-    case 'whip_pan': {
-      const whip = interpolate(enterProgress, [0, 1], [260, 0]);
-      tx += whip;
-      const blurPx = interpolate(enterProgress, [0, 0.7, 1], [10, 2, 0], {
-        extrapolateRight: 'clamp',
-      });
-      if (blurPx > 0.2) {
-        filter = `blur(${blurPx.toFixed(1)}px)`;
+  if (isFirst) {
+    // Keep Frame 0 crisp at full opacity while giving a gentle opening settle
+    const openSpring = spring({
+      frame,
+      fps,
+      config: { damping: 18, stiffness: 130 },
+    });
+    const openSettle = interpolate(openSpring, [0, 1], [1.03, 1.0]);
+    scale = Math.min(1.04, scale * openSettle);
+  } else {
+    switch (transition) {
+      case 'slide_left': {
+        tx += interpolate(enterSpring, [0, 1], [160, 0]);
+        opacity = (0.28 + Math.min(1, enterProgress * 1.4) * 0.72) * fadeOut;
+        break;
       }
-      opacity = Math.min(1, enterProgress * 1.6) * fadeOut;
-      break;
-    }
-    case 'wipe': {
-      const rightInset = interpolate(enterProgress, [0, 1], [100, 0]);
-      clipPath = `inset(0 ${rightInset.toFixed(1)}% 0 0)`;
-      break;
-    }
-    case 'iris': {
-      const radius = interpolate(enterProgress, [0, 1], [8, 120]);
-      clipPath = `circle(${radius.toFixed(1)}% at 50% 50%)`;
-      break;
-    }
-    case 'glitch': {
-      if (frame < 10) {
-        const jitterX = frame % 2 === 0 ? 18 - frame * 1.5 : -(14 - frame * 1.2);
-        const jitterY = frame % 3 === 0 ? -6 : 4;
-        tx += jitterX;
-        ty += jitterY;
-        const hue = frame % 2 === 0 ? 28 : -24;
-        filter = `hue-rotate(${hue}deg) contrast(1.18)`;
+      case 'slide_up': {
+        ty += interpolate(enterSpring, [0, 1], [130, 0]);
+        opacity = (0.28 + Math.min(1, enterProgress * 1.4) * 0.72) * fadeOut;
+        break;
       }
-      opacity = Math.min(1, (frame + 2) / 5) * fadeOut;
-      break;
-    }
-    case 'fade':
-    default: {
-      opacity = interpolate(frame, [0, 8], [0, 1], {
-        extrapolateLeft: 'clamp',
-        extrapolateRight: 'clamp',
-      }) * fadeOut;
-      break;
+      case 'zoom_punch': {
+        scale *= interpolate(enterSpring, [0, 1], [0.82, 1]);
+        opacity = (0.28 + Math.min(1, enterProgress * 1.5) * 0.72) * fadeOut;
+        break;
+      }
+      case 'whip_pan': {
+        const whip = interpolate(enterProgress, [0, 1], [260, 0]);
+        tx += whip;
+        const blurPx = interpolate(enterProgress, [0, 0.7, 1], [10, 2, 0], {
+          extrapolateRight: 'clamp',
+        });
+        if (blurPx > 0.2) {
+          filter = `blur(${blurPx.toFixed(1)}px)`;
+        }
+        opacity = (0.28 + Math.min(1, enterProgress * 1.6) * 0.72) * fadeOut;
+        break;
+      }
+      case 'wipe': {
+        const rightInset = interpolate(enterProgress, [0, 1], [100, 0]);
+        clipPath = `inset(0 ${rightInset.toFixed(1)}% 0 0)`;
+        break;
+      }
+      case 'iris': {
+        const radius = interpolate(enterProgress, [0, 1], [8, 120]);
+        clipPath = `circle(${radius.toFixed(1)}% at 50% 50%)`;
+        break;
+      }
+      case 'glitch': {
+        if (frame < 10) {
+          const jitterX = frame % 2 === 0 ? 18 - frame * 1.5 : -(14 - frame * 1.2);
+          const jitterY = frame % 3 === 0 ? -6 : 4;
+          tx += jitterX;
+          ty += jitterY;
+          const hue = frame % 2 === 0 ? 28 : -24;
+          filter = `hue-rotate(${hue}deg) contrast(1.18)`;
+        }
+        opacity = Math.min(1, (frame + 2) / 5) * fadeOut;
+        break;
+      }
+      case 'fade':
+      default: {
+        opacity =
+          interpolate(frame, [0, 8], [0.28, 1], {
+            extrapolateLeft: 'clamp',
+            extrapolateRight: 'clamp',
+          }) * fadeOut;
+        break;
+      }
     }
   }
 

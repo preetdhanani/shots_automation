@@ -7,6 +7,8 @@ import {
 } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames, getActiveBeatIndex } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: NewsCardData;
@@ -17,9 +19,15 @@ export const NewsQuoteCardScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('news_quote_card', scene.visual?.layout);
 
   const cardSpring = spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
+  const bulletBeats = computeBeatFrames(durationInFrames, Math.max(1, scene.bullets.length), words, {
+    startFrac: 0.14,
+    endFrac: 0.78,
+  });
+  const activeBulletIdx = getActiveBeatIndex(frame, bulletBeats);
 
   if (layout === 'breaking_ticker') {
     return (
@@ -70,22 +78,25 @@ export const NewsQuoteCardScene: React.FC<Props> = ({ scene }) => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {scene.bullets.map((bullet, idx) => {
               const itemSpring = spring({
-                frame: Math.max(0, frame - (6 + idx * 5)),
+                frame: Math.max(0, frame - idx * 4),
                 fps,
                 config: { damping: 16, stiffness: 145 },
               });
+              const isSpotlight = idx === activeBulletIdx;
               return (
                 <div
                   key={idx}
                   style={{
-                    opacity: itemSpring,
-                    transform: `translateX(${interpolate(itemSpring, [0, 1], [-18, 0])}px)`,
-                    borderLeft: `4px solid ${palette.accent}`,
-                    paddingLeft: 18,
+                    opacity: itemSpring * (isSpotlight ? 1 : 0.78),
+                    transform: `translateX(${interpolate(itemSpring, [0, 1], [-18, 0])}px) scale(${isSpotlight ? 1.015 : 1})`,
+                    borderLeft: `4px solid ${isSpotlight ? palette.accent : palette.accentBorder}`,
+                    backgroundColor: isSpotlight ? palette.accentSoft : 'transparent',
+                    borderRadius: 12,
+                    padding: '10px 18px',
                     fontSize: 29,
                     lineHeight: 1.36,
                     fontWeight: 500,
-                    color: '#E4E4E7',
+                    color: isSpotlight ? '#FFFFFF' : '#E4E4E7',
                   }}
                 >
                   {bullet}
@@ -142,7 +153,7 @@ export const NewsQuoteCardScene: React.FC<Props> = ({ scene }) => {
             textTransform: 'uppercase',
           }}
         >
-          — {scene.sourceLabel} · {scene.dateLabel}
+          - {scene.sourceLabel} · {scene.dateLabel}
         </div>
         <div
           style={{
@@ -155,12 +166,28 @@ export const NewsQuoteCardScene: React.FC<Props> = ({ scene }) => {
             gap: 14,
           }}
         >
-          {scene.bullets.map((bullet, idx) => (
-            <div key={idx} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-              <span style={{ color: palette.accent, fontSize: 26, fontWeight: 700 }}>•</span>
-              <span style={{ fontSize: 27, lineHeight: 1.36, color: '#E4E4E7' }}>{bullet}</span>
-            </div>
-          ))}
+          {scene.bullets.map((bullet, idx) => {
+            const isSpotlight = idx === activeBulletIdx;
+            return (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex',
+                  gap: 14,
+                  alignItems: 'flex-start',
+                  opacity: isSpotlight ? 1 : 0.78,
+                  backgroundColor: isSpotlight ? palette.accentSoft : 'transparent',
+                  borderRadius: 12,
+                  padding: '6px 10px',
+                }}
+              >
+                <span style={{ color: palette.accent, fontSize: 26, fontWeight: 700 }}>•</span>
+                <span style={{ fontSize: 27, lineHeight: 1.36, color: isSpotlight ? '#FFFFFF' : '#E4E4E7' }}>
+                  {bullet}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -252,21 +279,22 @@ export const NewsQuoteCardScene: React.FC<Props> = ({ scene }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         {scene.bullets.map((bullet, idx) => {
           const itemSpring = spring({
-            frame: Math.max(0, frame - (8 + idx * 6)),
+            frame: Math.max(0, frame - idx * 4),
             fps,
             config: { damping: 16, stiffness: 140 },
           });
+          const isSpotlight = idx === activeBulletIdx;
           return (
             <div
               key={idx}
               style={{
-                opacity: itemSpring,
-                transform: `translateY(${interpolate(itemSpring, [0, 1], [16, 0])}px)`,
+                opacity: itemSpring * (isSpotlight ? 1 : 0.78),
+                transform: `translateY(${interpolate(itemSpring, [0, 1], [16, 0])}px) scale(${isSpotlight ? 1.015 : 1})`,
                 display: 'flex',
                 alignItems: 'flex-start',
                 gap: 16,
-                backgroundColor: 'rgba(255, 255, 255, 0.035)',
-                border: '1px solid rgba(255, 255, 255, 0.07)',
+                backgroundColor: isSpotlight ? palette.accentSoft : 'rgba(255, 255, 255, 0.035)',
+                border: `1px solid ${isSpotlight ? palette.accentBorder : 'rgba(255, 255, 255, 0.07)'}`,
                 borderRadius: 18,
                 padding: '18px 22px',
               }}

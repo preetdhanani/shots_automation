@@ -7,6 +7,8 @@ import {
 } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames, getActiveBeatIndex } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: TerminalData;
@@ -24,6 +26,7 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('terminal_demo', scene.visual?.layout);
 
   const cardSpring = spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
@@ -37,6 +40,11 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene }) => {
   const typedCommand = scene.command.slice(0, typedCount);
   const doneTyping = typedCount >= scene.command.length;
   const showCursor = !doneTyping || frame % 20 < 11;
+  const outputBeats = computeBeatFrames(durationInFrames, Math.max(1, scene.outputLines.length), words, {
+    startFrac: 0.25,
+    endFrac: 0.82,
+  });
+  const activeOutputIdx = getActiveBeatIndex(frame, outputBeats);
 
   if (layout === 'retro_fullscreen') {
     return (
@@ -111,21 +119,25 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene }) => {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {scene.outputLines.map((line, idx) => {
-            const lineStart = 10 + typeFrames + idx * 5;
+            const lineStart = Math.min(10 + typeFrames + idx * 5, outputBeats[idx] ?? 10 + typeFrames + idx * 5);
             const lineSpring = spring({
               frame: Math.max(0, frame - lineStart),
               fps,
               config: { damping: 18, stiffness: 150 },
             });
+            const isSpotlight = idx === activeOutputIdx;
             const color = line.tone === 'accent' ? palette.accent : TONE_COLORS[line.tone];
             return (
               <div
                 key={idx}
                 style={{
-                  opacity: lineSpring,
+                  opacity: lineSpring * (isSpotlight ? 1 : 0.8),
                   fontSize: 25,
                   lineHeight: 1.4,
                   color,
+                  backgroundColor: isSpotlight ? palette.accentSoft : 'transparent',
+                  padding: '6px 10px',
+                  borderRadius: 8,
                 }}
               >
                 {line.text}
@@ -250,23 +262,24 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene }) => {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 6 }}>
             {scene.outputLines.map((line, idx) => {
-              const lineStart = 12 + typeFrames + idx * 6;
+              const lineStart = Math.min(12 + typeFrames + idx * 6, outputBeats[idx] ?? 12 + typeFrames + idx * 6);
               const lineSpring = spring({
                 frame: Math.max(0, frame - lineStart),
                 fps,
                 config: { damping: 18, stiffness: 150 },
               });
+              const isSpotlight = idx === activeOutputIdx;
               const color = line.tone === 'accent' ? palette.accent : TONE_COLORS[line.tone];
               return (
                 <div
                   key={idx}
                   style={{
-                    opacity: lineSpring,
-                    transform: `translateX(${interpolate(lineSpring, [0, 1], [16, 0])}px)`,
+                    opacity: lineSpring * (isSpotlight ? 1 : 0.8),
+                    transform: `translateX(${interpolate(lineSpring, [0, 1], [16, 0])}px) scale(${isSpotlight ? 1.015 : 1})`,
                     fontSize: 24,
                     lineHeight: 1.42,
                     color,
-                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    backgroundColor: isSpotlight ? palette.accentSoft : 'rgba(255, 255, 255, 0.03)',
                     padding: '10px 14px',
                     borderRadius: 10,
                     borderLeft: `3px solid ${color}`,

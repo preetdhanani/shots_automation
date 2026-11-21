@@ -7,7 +7,10 @@ import {
   computeStoryboardVisualHash,
   convertFlatGeminiResponseToStoryboard,
   GEMINI_STORYBOARD_JSON_SCHEMA,
+  isChannelOutroScene,
+  looksLikeFakeCodeProse,
   SAMPLE_DEMO_STORYBOARD,
+  sanitizeHashtags,
   validateStoryboardEditorial,
 } from '@post/core';
 
@@ -16,19 +19,20 @@ describe('Storyboard Schemas & Editorial Quality Gate', () => {
     const res = validateStoryboardEditorial(SAMPLE_DEMO_STORYBOARD);
     expect(res.ok).toBe(true);
     expect(res.errors).toEqual([]);
-    expect(res.totalWords).toBeGreaterThanOrEqual(70);
-    expect(res.totalWords).toBeLessThanOrEqual(180);
-    expect(SAMPLE_DEMO_STORYBOARD.scenes[SAMPLE_DEMO_STORYBOARD.scenes.length - 1]?.narration).toBe(
-      CHANNEL_OUTRO_NARRATION,
-    );
+    expect(res.totalWords).toBeGreaterThanOrEqual(40);
+    expect(res.totalWords).toBeLessThanOrEqual(175);
+    expect(SAMPLE_DEMO_STORYBOARD.scenes).toHaveLength(6);
+    expect(SAMPLE_DEMO_STORYBOARD.scenes[5]?.type).toBe('takeaway_cta');
+    expect(SAMPLE_DEMO_STORYBOARD.scenes[5]?.narration).toBe(CHANNEL_OUTRO_NARRATION);
+    expect(isChannelOutroScene(SAMPLE_DEMO_STORYBOARD.scenes[5]!)).toBe(true);
   });
 
   it('appends the standard channel outro scene idempotently', () => {
-    const base = {
+    const withoutOutro = {
       ...SAMPLE_DEMO_STORYBOARD,
       scenes: SAMPLE_DEMO_STORYBOARD.scenes.slice(0, 5),
     };
-    const withOutro = appendChannelOutroScene(base);
+    const withOutro = appendChannelOutroScene(withoutOutro);
     expect(withOutro.scenes).toHaveLength(6);
     expect(withOutro.scenes[5]?.type).toBe('takeaway_cta');
     expect(withOutro.scenes[5]?.narration).toBe(CHANNEL_OUTRO_NARRATION);
@@ -49,7 +53,7 @@ describe('Storyboard Schemas & Editorial Quality Gate', () => {
           prompt: 'Futuristic terminal room',
           captionText: 'AI Clip',
         },
-        SAMPLE_DEMO_STORYBOARD.scenes[5]!,
+        ...SAMPLE_DEMO_STORYBOARD.scenes.slice(4),
       ],
     };
     const disabledRes = validateStoryboardEditorial(mutated);
@@ -127,5 +131,62 @@ describe('Storyboard Schemas & Editorial Quality Gate', () => {
     expect(converted.scenes[0]?.type).toBe('hook_title');
     expect(computeNarrationHash(converted)).toHaveLength(64);
     expect(computeStoryboardVisualHash(converted, true, '@dev')).toHaveLength(64);
+  });
+
+  it('rejects fake code prose, sanitizes hashtags (3-5), bounds before+after code lines, and guards @ai.dev.reels leaks', () => {
+    expect(
+      looksLikeFakeCodeProse(
+        'This pattern avoids creating huge objects in memory.\nInstead we stream chunks to the worker.',
+      ),
+    ).toBe(true);
+    expect(
+      looksLikeFakeCodeProse(
+        'const pool = new WorkerPool({ size: 4 });\nawait pool.run(task);',
+      ),
+    ).toBe(false);
+
+    const oversizedCode = structuredClone(SAMPLE_DEMO_STORYBOARD);
+    oversizedCode.scenes[1] = {
+      id: 'scene-2',
+      type: 'code_compare',
+      narration: 'Compare before and after streaming handlers cleanly.',
+      language: 'ts',
+      filename: 'worker.ts',
+      mode: 'before_after',
+      beforeCode: Array.from({ length: 10 }, (_, i) => `const b${i} = ${i};`).join('\n'),
+      afterCode: Array.from({ length: 9 }, (_, i) => `const a${i} = ${i};`).join('\n'),
+    };
+    const codeCheck = validateStoryboardEditorial(oversizedCode);
+    expect(codeCheck.ok).toBe(false);
+    expect(codeCheck.errors.some((e) => e.includes('18'))).toBe(true);
+
+    const sanitized = sanitizeHashtags(
+      ['#ai', 'coding', '#coding', '#next.js', 'a', '#TypeScript!', '#DevTools', '#Extra'],
+      { maxTags: 5 },
+    );
+    expect(sanitized).toEqual(['#ai', '#coding', '#nextjs', '#typescript', '#devtools']);
+
+    const leaky = structuredClone(SAMPLE_DEMO_STORYBOARD);
+    leaky.caption = 'Save this tip and follow @ai.dev.reels today.';
+    const leakCheck = validateStoryboardEditorial(leaky, {
+      brandHandle: '',
+      rejectDefaultBrandLeak: true,
+    });
+    expect(leakCheck.ok).toBe(false);
+    expect(leakCheck.errors.some((e) => e.includes('@ai.dev.reels'))).toBe(true);
+
+    const tooManyScenes = {
+      ...SAMPLE_DEMO_STORYBOARD,
+      scenes: [
+        ...SAMPLE_DEMO_STORYBOARD.scenes,
+        { ...SAMPLE_DEMO_STORYBOARD.scenes[1]!, id: 'extra-1' },
+        { ...SAMPLE_DEMO_STORYBOARD.scenes[3]!, id: 'extra-2' },
+        { ...SAMPLE_DEMO_STORYBOARD.scenes[1]!, id: 'extra-3' },
+        { ...SAMPLE_DEMO_STORYBOARD.scenes[4]!, id: 'extra-4' },
+      ],
+    };
+    const sceneLimitCheck = validateStoryboardEditorial(tooManyScenes);
+    expect(sceneLimitCheck.ok).toBe(false);
+    expect(sceneLimitCheck.errors.some((e) => e.includes('max 8 scenes'))).toBe(true);
   });
 });

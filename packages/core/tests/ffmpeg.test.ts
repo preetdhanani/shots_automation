@@ -1,7 +1,14 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildDeliveryFfmpegArgs,
+  concatVoiceSegmentsWithPause,
   detectGeminiAudioInput,
+  getAudioDurationMs,
+  prepareNormalizedVoicePair,
   verifyInstagramReelSpec,
 } from '@post/core';
 
@@ -35,6 +42,145 @@ describe('FFmpeg Audio Detection, Delivery Args, & Instagram Spec Validator', ()
     expect(args).toContain('open-gop=0:keyint=60:min-keyint=60:scenecut=0');
     expect(args).toContain('48000');
     expect(args).toContain('+faststart');
+
+    const tmpMusicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'post-ffmpeg-args-'));
+    try {
+      const dummyMusic = path.join(tmpMusicDir, 'music.wav');
+      const dummySfx = path.join(tmpMusicDir, 'pop.wav');
+      fs.writeFileSync(dummyMusic, Buffer.alloc(64));
+      fs.writeFileSync(dummySfx, Buffer.alloc(64));
+      const musicArgs = buildDeliveryFfmpegArgs({
+        rawVideoPath: '/tmp/raw.mp4',
+        voice48kPath: '/tmp/voice.wav',
+        outputMp4Path: '/tmp/out.mp4',
+        durationSec: 40,
+        musicEnabled: true,
+        musicPath: dummyMusic,
+        sfxCues: [{ path: dummySfx, offsetMs: 35, volumeDb: -21 }],
+      });
+      const filterComplex = musicArgs.join(' ');
+      expect(filterComplex).toContain('volume=-17dB');
+      expect(filterComplex).toContain('afade=t=in:st=0:d=0.28,afade=t=out:st=39.45:d=0.50');
+      expect(filterComplex).toContain('adelay=35|35');
+      expect(filterComplex).toContain('sidechaincompress=threshold=0.02:ratio=3.5:attack=15:release=220:makeup=1');
+      expect(filterComplex).toContain('alimiter=limit=0.95:level=false,afade=t=in:st=0:d=0.02,afade=t=out:st=39.940:d=0.06[aout]');
+    } finally {
+      fs.rmSync(tmpMusicDir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes voice with loudnorm-first and alimiter level=false keeping peak <= -1.0 dB', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'post-voice-norm-'));
+    try {
+      const rawWav = path.join(tmpDir, 'raw.wav');
+      const trimmed = path.join(tmpDir, 'trimmed.wav');
+      const out48 = path.join(tmpDir, 'voice-48k.wav');
+      const out16 = path.join(tmpDir, 'voice-16k.wav');
+
+      execFileSync(
+        'ffmpeg',
+        [
+          '-y',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=220:sample_rate=24000:duration=2.5',
+          '-filter:a',
+          'volume=-8dB',
+          '-c:a',
+          'pcm_s16le',
+          rawWav,
+        ],
+        { stdio: 'ignore' },
+      );
+
+      const rawBytes = fs.readFileSync(rawWav);
+      const { durationMs } = await prepareNormalizedVoicePair({
+        rawAudioPath: rawWav,
+        rawBytes,
+        mimeType: 'audio/wav',
+        trimmedMasterPath: trimmed,
+        output48kPath: out48,
+        output16kPath: out16,
+      });
+
+      expect(durationMs).toBeGreaterThan(1500);
+      expect(fs.existsSync(`${trimmed}.norm.wav`)).toBe(false);
+      expect(fs.existsSync(out48)).toBe(true);
+      expect(fs.existsSync(out16)).toBe(true);
+
+      const probe = spawnSync(
+        'ffmpeg',
+        ['-i', out48, '-af', 'volumedetect', '-f', 'null', '-'],
+        { encoding: 'utf8' },
+      );
+      const match = /max_volume:\s*([-\d.]+)\s*dB/.exec(probe.stderr || '');
+      expect(match).not.toBeNull();
+      expect(Number.parseFloat(match![1]!)).toBeLessThanOrEqual(-1.0);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('concatenates main and outro voice segments with explicit silence pause and tail pad', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'post-voice-concat-'));
+    try {
+      const mainWav = path.join(tmpDir, 'main-48k.wav');
+      const outroWav = path.join(tmpDir, 'outro-48k.wav');
+      const out48 = path.join(tmpDir, 'joined-48k.wav');
+      const out16 = path.join(tmpDir, 'joined-16k.wav');
+
+      execFileSync(
+        'ffmpeg',
+        [
+          '-y',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=330:sample_rate=48000:duration=0.8',
+          '-ac',
+          '2',
+          '-c:a',
+          'pcm_s16le',
+          mainWav,
+        ],
+        { stdio: 'ignore' },
+      );
+      execFileSync(
+        'ffmpeg',
+        [
+          '-y',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=440:sample_rate=48000:duration=0.6',
+          '-ac',
+          '2',
+          '-c:a',
+          'pcm_s16le',
+          outroWav,
+        ],
+        { stdio: 'ignore' },
+      );
+
+      const { durationMs } = await concatVoiceSegmentsWithPause({
+        mainVoice48kPath: mainWav,
+        outroVoice48kPath: outroWav,
+        pauseMs: 450,
+        tailPadMs: 220,
+        output48kPath: out48,
+        output16kPath: out16,
+      });
+
+      const expectedMs = 800 + 450 + 600 + 220;
+      expect(durationMs).toBeGreaterThanOrEqual(expectedMs - 80);
+      expect(durationMs).toBeLessThanOrEqual(expectedMs + 80);
+      expect(fs.existsSync(out16)).toBe(true);
+      const dur16 = await getAudioDurationMs(out16);
+      expect(Math.abs(dur16 - durationMs)).toBeLessThanOrEqual(40);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('validates Instagram Reels MP4 constraints accurately', () => {

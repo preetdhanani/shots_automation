@@ -195,7 +195,7 @@ async function main(): Promise<void> {
   }
 
   const store = new SqliteStore(path.join(env.DATA_DIR_ABS, 'post.db'));
-  const queue = new PipelineQueue(store);
+  const queue = new PipelineQueue(store, { maxConcurrentRenders: env.MAX_CONCURRENT_RENDERS });
   const orchestrator = new ReelOrchestrator({
     env,
     store,

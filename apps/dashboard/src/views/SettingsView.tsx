@@ -39,9 +39,12 @@ export const SettingsView: React.FC<Props> = ({
   const [defaultVoice, setDefaultVoice] = useState<VoiceName>(
     health?.settings.defaultVoice ?? 'Puck',
   );
-  const [brandHandle, setBrandHandle] = useState(health?.settings.brandHandle ?? '@ai.dev.reels');
+  const [brandHandle, setBrandHandle] = useState(health?.settings.brandHandle ?? '');
   const [musicEnabled, setMusicEnabled] = useState(health?.settings.musicEnabled ?? true);
-  const [musicVolumeDb, setMusicVolumeDb] = useState(health?.settings.musicVolumeDb ?? -22);
+  const [musicVolumeDb, setMusicVolumeDb] = useState(health?.settings.musicVolumeDb ?? -17);
+  const [minPublishSpacingHours, setMinPublishSpacingHours] = useState(
+    health?.settings.minPublishSpacingHours ?? 6,
+  );
   const [voiceRotation, setVoiceRotation] = useState(health?.settings.voiceRotation ?? false);
   const [aiBrollEnabled, setAiBrollEnabled] = useState(health?.settings.aiBrollEnabled ?? false);
   const [saving, setSaving] = useState(false);
@@ -53,6 +56,7 @@ export const SettingsView: React.FC<Props> = ({
     setBrandHandle(health.settings.brandHandle);
     setMusicEnabled(health.settings.musicEnabled);
     setMusicVolumeDb(health.settings.musicVolumeDb);
+    setMinPublishSpacingHours(health.settings.minPublishSpacingHours ?? 6);
     setVoiceRotation(Boolean(health.settings.voiceRotation));
     setAiBrollEnabled(Boolean(health.settings.aiBrollEnabled));
   }, [health]);
@@ -68,6 +72,7 @@ export const SettingsView: React.FC<Props> = ({
           brandHandle,
           musicEnabled,
           musicVolumeDb,
+          minPublishSpacingHours,
           voiceRotation,
           aiBrollEnabled,
         }),
@@ -286,19 +291,61 @@ export const SettingsView: React.FC<Props> = ({
             />
           </div>
 
-          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-[#171A24] px-4 py-2.5">
-            <div>
-              <span className="text-sm font-medium text-zinc-200">
-                Subtle Ambient Music ({musicVolumeDb}dB)
-              </span>
-              <p className="text-xs text-zinc-400">Default for new generated Reels</p>
+          <div className="flex flex-col justify-between gap-2 rounded-xl border border-white/10 bg-[#171A24] px-4 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <span className="text-sm font-medium text-zinc-200">
+                  Subtle Ambient Music ({musicVolumeDb}dB)
+                </span>
+                <p className="text-xs text-zinc-400">Default for new generated Reels</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={musicEnabled}
+                onChange={(e) => setMusicEnabled(e.target.checked)}
+                className="h-4 w-4 accent-cyan-400"
+              />
             </div>
-            <input
-              type="checkbox"
-              checked={musicEnabled}
-              onChange={(e) => setMusicEnabled(e.target.checked)}
-              className="h-4 w-4 accent-cyan-400"
-            />
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                aria-label="Background Music Volume"
+                min={-30}
+                max={-10}
+                step={1}
+                value={musicVolumeDb}
+                onChange={(e) => setMusicVolumeDb(Number(e.target.value))}
+                className="h-1.5 flex-1 cursor-pointer accent-cyan-400"
+              />
+              <span className="w-14 text-right font-mono text-xs text-zinc-300">
+                {musicVolumeDb} dB
+              </span>
+            </div>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="mb-1.5 block text-xs font-medium text-zinc-300">
+              Minimum Publish Spacing (hours)
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="number"
+                aria-label="Minimum Publish Spacing Hours"
+                min={0}
+                max={48}
+                step={1}
+                value={minPublishSpacingHours}
+                onChange={(e) =>
+                  setMinPublishSpacingHours(
+                    Math.max(0, Math.min(48, Math.round(Number(e.target.value) || 0))),
+                  )
+                }
+                className="w-28 rounded-xl border border-white/10 bg-[#171A24] px-3.5 py-2 text-sm text-zinc-100 focus:border-cyan-400/60 focus:outline-none"
+              />
+              <span className="text-xs text-zinc-400">
+                Guardrail against back-to-back Instagram uploads (0 disables; recommended 6h)
+              </span>
+            </div>
           </div>
         </div>
 

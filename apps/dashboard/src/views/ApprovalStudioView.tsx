@@ -172,6 +172,9 @@ export const ApprovalStudioView: React.FC<Props> = ({
           }),
         },
       );
+      setDraftCaption(res.reel.caption);
+      setDraftHashtags(res.reel.hashtags);
+      setDraftStoryboard(res.reel.storyboard);
       setDetail((prev) =>
         prev
           ? {
@@ -286,15 +289,23 @@ export const ApprovalStudioView: React.FC<Props> = ({
     });
   };
 
-  const handleConfirmPublish = async () => {
+  const handleConfirmPublish = async (opts?: { force?: boolean }) => {
     if (!reel) return;
     await flushEdits();
-    const res = await apiFetch<{ run: { id: string } }>(
-      `/api/reels/${encodeURIComponent(reel.id)}/publish`,
-      { method: 'POST', body: JSON.stringify({ dryRun: false }) },
-    );
-    onReelsChanged();
-    onRunStarted(res.run.id);
+    try {
+      const res = await apiFetch<{ run: { id: string } }>(
+        `/api/reels/${encodeURIComponent(reel.id)}/publish`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ dryRun: false, force: Boolean(opts?.force) }),
+        },
+      );
+      onReelsChanged();
+      onRunStarted(res.run.id);
+    } catch (err) {
+      void loadDetail(reel.id);
+      throw err;
+    }
   };
 
   const handleReconcile = async () => {
@@ -825,6 +836,7 @@ export const ApprovalStudioView: React.FC<Props> = ({
           caption={draftCaption}
           hashtags={draftHashtags}
           metaStatus={metaStatus}
+          publishSpacing={detail?.publishSpacing ?? null}
           onClose={() => setPublishModalOpen(false)}
           onDryRun={handleDryRun}
           onConfirmPublish={handleConfirmPublish}

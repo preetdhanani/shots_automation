@@ -283,6 +283,7 @@ describe('Custom OpenAI-Compatible LLM Support', () => {
         brandHandle: '@default',
         musicEnabled: true,
         musicVolumeDb: -22,
+        minPublishSpacingHours: 6,
         activeLlmEndpointId: null,
         aiBrollEnabled: false,
         voiceRotation: false,
@@ -566,9 +567,64 @@ describe('Custom OpenAI-Compatible LLM Support', () => {
       );
       expect(attemptForTopic).toBe(2);
       expect(repaired.scenes).toHaveLength(6);
+      expect(repaired.scenes[5]?.type).toBe('takeaway_cta');
       expect(repaired.scenes[5]?.narration).toBe(CHANNEL_OUTRO_NARRATION);
     } finally {
       await mockServer.close();
     }
+  });
+
+  it('migrates SQLite v2 -> v3 upgrading legacy -22 dB music volume to -17 dB without touching custom values', () => {
+    const legacyDbPath = path.join(tmpDir, 'v2-legacy.db');
+    const db1 = new DatabaseSync(legacyDbPath);
+    db1.exec(`
+      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+      INSERT INTO schema_migrations (version, applied_at) VALUES (1, '2026-11-01T00:00:00.000Z');
+      INSERT INTO schema_migrations (version, applied_at) VALUES (2, '2026-11-01T00:00:00.000Z');
+      INSERT INTO settings (key, value_json, updated_at) VALUES ('musicVolumeDb', '-22', '2026-11-01T00:00:00.000Z');
+    `);
+    db1.close();
+
+    const upgradedStore = new SqliteStore(legacyDbPath);
+    expect(
+      upgradedStore.getSettings({
+        defaultVoice: 'Puck',
+        brandHandle: '',
+        musicEnabled: true,
+        musicVolumeDb: -17,
+        minPublishSpacingHours: 6,
+        activeLlmEndpointId: null,
+        aiBrollEnabled: false,
+        voiceRotation: false,
+      }).musicVolumeDb,
+    ).toBe(-17);
+    upgradedStore.close();
+
+    const customDbPath = path.join(tmpDir, 'v2-custom.db');
+    const db2 = new DatabaseSync(customDbPath);
+    db2.exec(`
+      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+      INSERT INTO schema_migrations (version, applied_at) VALUES (1, '2026-11-01T00:00:00.000Z');
+      INSERT INTO schema_migrations (version, applied_at) VALUES (2, '2026-11-01T00:00:00.000Z');
+      INSERT INTO settings (key, value_json, updated_at) VALUES ('musicVolumeDb', '-15', '2026-11-01T00:00:00.000Z');
+    `);
+    db2.close();
+
+    const customStore = new SqliteStore(customDbPath);
+    expect(
+      customStore.getSettings({
+        defaultVoice: 'Puck',
+        brandHandle: '',
+        musicEnabled: true,
+        musicVolumeDb: -17,
+        minPublishSpacingHours: 6,
+        activeLlmEndpointId: null,
+        aiBrollEnabled: false,
+        voiceRotation: false,
+      }).musicVolumeDb,
+    ).toBe(-15);
+    customStore.close();
   });
 });

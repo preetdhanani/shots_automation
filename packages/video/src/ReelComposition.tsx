@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { AbsoluteFill, Audio, Sequence } from 'remotion';
+import { AbsoluteFill, Audio, Sequence, useVideoConfig } from 'remotion';
 import {
   DEFAULT_CAMERA_MOVE,
   DEFAULT_TRANSITION,
@@ -25,6 +25,8 @@ import { TerminalDemoScene } from './scenes/TerminalDemoScene.js';
 import { TimelineScene } from './scenes/TimelineScene.js';
 import { VersusSplitScene } from './scenes/VersusSplitScene.js';
 import { ReelStyleProvider } from './style/ReelStyleContext.js';
+import { SceneRuntimeProvider } from './style/SceneRuntimeContext.js';
+import { sliceSceneWordTokens } from './style/sceneRuntimeHelpers.js';
 import type { ReelCompositionProps } from './types.js';
 
 const SceneRenderer: React.FC<{
@@ -33,8 +35,9 @@ const SceneRenderer: React.FC<{
   assets: ReelCompositionProps['storyboard']['assets'];
   brandHandle: string;
   durationInFrames: number;
+  isFirst: boolean;
   isLast: boolean;
-}> = ({ scene, pillar, assets, brandHandle, durationInFrames, isLast }) => {
+}> = ({ scene, pillar, assets, brandHandle, durationInFrames, isFirst, isLast }) => {
   let content: React.ReactNode = null;
   switch (scene.type) {
     case 'hook_title':
@@ -100,6 +103,7 @@ const SceneRenderer: React.FC<{
       transition={transition}
       camera={camera}
       durationInFrames={durationInFrames}
+      isFirst={isFirst}
       isLast={isLast}
     >
       {content}
@@ -115,6 +119,7 @@ export const ReelComposition: React.FC<ReelCompositionProps> = ({
   audioUrl,
   assetUrls,
 }) => {
+  const { fps } = useVideoConfig();
   const totalScenes = storyboard.scenes.length;
 
   const emphasisWords = useMemo(
@@ -137,30 +142,53 @@ export const ReelComposition: React.FC<ReelCompositionProps> = ({
           const timing = sceneTimings[idx];
           const from = timing?.startFrame ?? idx * 150;
           const duration = Math.max(1, timing?.durationInFrames ?? 150);
+          const sceneStartMs = timing?.startMs ?? Math.round((from / fps) * 1000);
+          const sceneEndMs =
+            timing?.endMs ?? Math.round(((from + duration) / fps) * 1000);
+          const sceneWords = sliceSceneWordTokens(
+            captions,
+            { startMs: sceneStartMs, endMs: sceneEndMs },
+            fps,
+          );
 
           return (
             <Sequence key={scene.id} from={from} durationInFrames={duration}>
-              <SafeFrame
-                pillar={storyboard.pillar}
-                brandHandle={brandHandle}
-                sceneIndex={idx}
-                totalScenes={totalScenes}
+              <SceneRuntimeProvider
+                value={{
+                  sceneIndex: idx,
+                  totalScenes,
+                  isFirst: idx === 0,
+                  isLast: idx === totalScenes - 1,
+                  sceneStartMs,
+                  sceneEndMs,
+                  durationInFrames: duration,
+                  words: sceneWords,
+                }}
               >
-                <SceneRenderer
-                  scene={scene}
+                <SafeFrame
                   pillar={storyboard.pillar}
-                  assets={storyboard.assets}
                   brandHandle={brandHandle}
-                  durationInFrames={duration}
-                  isLast={idx === totalScenes - 1}
-                />
-              </SafeFrame>
+                  sceneIndex={idx}
+                  totalScenes={totalScenes}
+                >
+                  <SceneRenderer
+                    scene={scene}
+                    pillar={storyboard.pillar}
+                    assets={storyboard.assets}
+                    brandHandle={brandHandle}
+                    durationInFrames={duration}
+                    isFirst={idx === 0}
+                    isLast={idx === totalScenes - 1}
+                  />
+                </SafeFrame>
+              </SceneRuntimeProvider>
             </Sequence>
           );
         })}
 
         <CaptionOverlay
           captions={captions}
+          sceneTimings={sceneTimings}
           pillar={storyboard.pillar}
           emphasisWords={emphasisWords}
         />

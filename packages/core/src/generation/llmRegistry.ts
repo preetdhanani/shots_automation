@@ -1,5 +1,6 @@
 import type { AppEnv } from '../config/env.js';
 import type { AppSettings, Store } from '../db/store.js';
+import { DEFAULT_MIN_PUBLISH_SPACING_HOURS } from '../publish/spacing.js';
 import { maskApiKey, normalizeOpenAIBaseUrl, type LlmEndpointPublicDto } from '../schemas/llm.js';
 
 export interface ResolvedLlmEndpoint extends LlmEndpointPublicDto {
@@ -28,10 +29,11 @@ export function getDefaultAppSettingsFromEnv(env: AppEnv): AppSettings {
     defaultVoice: env.GEMINI_TTS_VOICE,
     brandHandle: env.BRAND_HANDLE,
     musicEnabled: true,
-    musicVolumeDb: -22,
+    musicVolumeDb: -17,
     activeLlmEndpointId: null,
     aiBrollEnabled: false,
     voiceRotation: false,
+    minPublishSpacingHours: DEFAULT_MIN_PUBLISH_SPACING_HOURS,
   };
 }
 

@@ -39,9 +39,10 @@ const EnvSchema = z.object({
 
   GITHUB_TOKEN: z.string().trim().default(''),
 
-  BRAND_HANDLE: z.string().trim().default('@ai.dev.reels'),
+  BRAND_HANDLE: z.string().trim().default(''),
   WHISPER_CLI_PATH: z.string().trim().default(''),
   SERVER_PORT: z.coerce.number().int().min(1).max(65535).default(4310),
+  MAX_CONCURRENT_RENDERS: z.coerce.number().int().min(1).max(8).default(2),
   DATA_DIR: z.string().trim().min(1).default('./data'),
 });
 

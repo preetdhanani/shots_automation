@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { assembleInstagramCaption } from '@post/core/shared';
+import React, { useEffect, useState } from 'react';
+import { assembleInstagramCaption, type PublishSpacingStatus } from '@post/core/shared';
 import { AlertTriangle, CheckCircle2, ShieldCheck, X } from 'lucide-react';
 import { InstagramIcon } from './InstagramIcon.js';
 import type { MetaCheckDto, PublishResultDto, ReelDto } from '../api.js';
@@ -10,9 +10,10 @@ interface Props {
   caption: string;
   hashtags: string[];
   metaStatus: MetaCheckDto | null;
+  publishSpacing?: PublishSpacingStatus | null;
   onClose: () => void;
   onDryRun: () => Promise<PublishResultDto>;
-  onConfirmPublish: () => Promise<void>;
+  onConfirmPublish: (opts?: { force?: boolean }) => Promise<void>;
 }
 
 export const PublishModal: React.FC<Props> = ({
@@ -21,6 +22,7 @@ export const PublishModal: React.FC<Props> = ({
   caption,
   hashtags,
   metaStatus,
+  publishSpacing,
   onClose,
   onDryRun,
   onConfirmPublish,
@@ -28,9 +30,19 @@ export const PublishModal: React.FC<Props> = ({
   const [dryRunResult, setDryRunResult] = useState<PublishResultDto | null>(null);
   const [runningDry, setRunningDry] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [overrideSpacing, setOverrideSpacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setOverrideSpacing(false);
+    setDryRunResult(null);
+    setError(null);
+  }, [open, reel.id]);
+
   if (!open) return null;
+
+  const spacingBlocked = Boolean(!reel.isSample && publishSpacing && !publishSpacing.allowed);
+  const publishDisabled = reel.isSample || publishing || (spacingBlocked && !overrideSpacing);
 
   const assembled = assembleInstagramCaption(caption, hashtags);
   const coverUrl = `/api/reels/${reel.id}/cover?v=${encodeURIComponent(reel.updatedAt)}`;
@@ -52,7 +64,7 @@ export const PublishModal: React.FC<Props> = ({
     setPublishing(true);
     setError(null);
     try {
-      await onConfirmPublish();
+      await onConfirmPublish({ force: overrideSpacing });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Publish failed');
@@ -121,6 +133,24 @@ export const PublishModal: React.FC<Props> = ({
           </div>
         ) : null}
 
+        {spacingBlocked && publishSpacing ? (
+          <div className="mt-4 space-y-2 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{publishSpacing.message}</span>
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 pl-6 font-medium text-amber-100">
+              <input
+                type="checkbox"
+                checked={overrideSpacing}
+                onChange={(e) => setOverrideSpacing(e.target.checked)}
+                className="h-3.5 w-3.5 accent-amber-400"
+              />
+              <span>Override spacing guardrail and publish anyway</span>
+            </label>
+          </div>
+        ) : null}
+
         {dryRunResult ? (
           <div className="mt-4 space-y-1.5 rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-3 text-xs text-emerald-200">
             <div className="flex items-center gap-1.5 font-semibold">
@@ -163,7 +193,7 @@ export const PublishModal: React.FC<Props> = ({
             <button
               type="button"
               onClick={handlePublish}
-              disabled={reel.isSample || publishing}
+              disabled={publishDisabled}
               className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-300 disabled:opacity-45"
             >
               <InstagramIcon className="h-4 w-4" />

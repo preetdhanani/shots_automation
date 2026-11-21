@@ -3,6 +3,8 @@ import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type MythFactScene as MythFactData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames, findSpokenWordFrame } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: MythFactData;
@@ -12,18 +14,49 @@ export const MythFactScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { isFirst, durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('myth_fact', scene.visual?.layout);
 
-  const mythSpring = spring({ frame, fps, config: { damping: 16, stiffness: 150 } });
-  const strikeProgress = interpolate(frame, [10, 20], [0, 100], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
-  const factSpring = spring({
-    frame: Math.max(0, frame - 14),
-    fps,
-    config: { damping: 14, stiffness: 145 },
-  });
+  const fallbackPivot = computeBeatFrames(durationInFrames, 2, words, {
+    startFrac: 0.16,
+    endFrac: 0.48,
+  })[1] ?? Math.round(durationInFrames * 0.42);
+  const pivotFrame = findSpokenWordFrame(
+    words,
+    [
+      'reality',
+      'actually',
+      'fact',
+      'truth',
+      'instead',
+      ...(scene.visual?.emphasis?.flatMap((e) => e.split(/\s+/)) ?? []),
+    ],
+    fallbackPivot,
+  );
+
+  const mythSpring = isFirst
+    ? 1
+    : spring({ frame, fps, config: { damping: 16, stiffness: 150 } });
+  const strikeProgress = interpolate(
+    frame,
+    isFirst ? [0, Math.max(18, pivotFrame)] : [10, Math.max(22, pivotFrame)],
+    [isFirst ? 60 : 0, 100],
+    {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+    },
+  );
+  const factSpring = isFirst
+    ? 1
+    : spring({
+        frame: Math.max(0, frame - 4),
+        fps,
+        config: { damping: 15, stiffness: 155 },
+      });
+  const factFocused = frame >= pivotFrame;
+  const focusPulse = factFocused
+    ? interpolate(frame, [pivotFrame, pivotFrame + 10], [1, 1.02], { extrapolateRight: 'clamp' })
+    : 1;
 
   if (layout === 'stacked') {
     return (
@@ -70,12 +103,14 @@ export const MythFactScene: React.FC<Props> = ({ scene }) => {
         <div
           style={{
             opacity: factSpring,
-            transform: `translateY(${interpolate(factSpring, [0, 1], [24, 0])}px)`,
+            transform: `translateY(${interpolate(factSpring, [0, 1], [24, 0])}px) scale(${focusPulse})`,
             backgroundColor: palette.surface,
             border: `2px solid ${palette.accentBorder}`,
             borderRadius: 26,
             padding: '34px 32px',
-            boxShadow: `0 24px 64px rgba(0,0,0,0.6), 0 0 34px ${palette.glow}`,
+            boxShadow: factFocused
+              ? `0 28px 68px rgba(0,0,0,0.65), 0 0 42px ${palette.glow}`
+              : `0 24px 64px rgba(0,0,0,0.6), 0 0 24px ${palette.glow}`,
             display: 'flex',
             flexDirection: 'column',
             gap: 16,
@@ -182,7 +217,7 @@ export const MythFactScene: React.FC<Props> = ({ scene }) => {
       <div
         style={{
           opacity: factSpring,
-          transform: `scale(${interpolate(factSpring, [0, 1], [0.94, 1])})`,
+          transform: `scale(${interpolate(factSpring, [0, 1], [0.94, 1]) * focusPulse})`,
           display: 'flex',
           flexDirection: 'column',
           gap: 14,

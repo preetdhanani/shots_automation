@@ -4,12 +4,22 @@ import {
 } from '../schemas/storyboard.js';
 import {
   extractOpeningWords,
+  extractSceneHookHeadline,
   normalizeWordTokens,
   textJaccardSimilarity,
   type ReelFingerprint,
 } from './fingerprint.js';
 import type { ReelFormatSpec } from './formats.js';
-import type { MiddleSceneType } from './registry.js';
+import type { MiddleSceneType, SceneType } from './registry.js';
+
+const DATA_FIRST_OPENING_TYPES = new Set<SceneType>([
+  'hook_title',
+  'benchmark_bars',
+  'versus_split',
+  'big_stat',
+  'code_compare',
+  'myth_fact',
+]);
 
 export interface VarietyValidationOptions {
   formatSpec?: ReelFormatSpec;
@@ -21,6 +31,17 @@ export interface VarietyValidationOptions {
 export interface VarietyCheckResult {
   ok: boolean;
   errors: string[];
+}
+
+const SPAM_ENGAGEMENT_BAIT_PATTERNS: readonly RegExp[] = [
+  /\bcomment\s+["'][a-z0-9_-]{2,20}["']/i,
+  /\bcomment\s+[A-Z]{2,20}\b/,
+  /\bdm\s+me\b/i,
+  /\blink\s+in\s+bio\b/i,
+];
+
+function hasSpamEngagementBait(text: string): boolean {
+  return SPAM_ENGAGEMENT_BAIT_PATTERNS.some((re) => re.test(text));
 }
 
 function tokenContainmentRatio(quote: string, sourceText: string): number {
@@ -46,13 +67,16 @@ export function validateVarietyRules(
   const contentScenes = storyboard.scenes.filter((scene) => !isChannelOutroScene(scene));
   const firstScene = contentScenes[0];
   const lastContentScene = contentScenes[contentScenes.length - 1];
+  const nonCtaScenes = contentScenes.slice(0, -1);
   const middleScenes = contentScenes.slice(1, -1);
 
-  if (!firstScene || firstScene.type !== 'hook_title') {
-    errors.push('Scene 1 must be type "hook_title".');
+  if (!firstScene || !DATA_FIRST_OPENING_TYPES.has(firstScene.type)) {
+    errors.push(
+      'Scene 1 must be "hook_title" or a data-first visual receipt scene ("benchmark_bars", "versus_split", "big_stat", "code_compare", or "myth_fact").',
+    );
   }
   if (!lastContentScene || lastContentScene.type !== 'takeaway_cta') {
-    errors.push('The final content scene before the channel outro must be type "takeaway_cta".');
+    errors.push('The final content scene must be type "takeaway_cta".');
   }
 
   let brollCount = 0;
@@ -72,13 +96,19 @@ export function validateVarietyRules(
     const [minScenes, maxScenes] = formatSpec.sceneCount;
     if (contentScenes.length < minScenes || contentScenes.length > maxScenes) {
       errors.push(
-        `Format "${formatSpec.id}" requires ${minScenes} to ${maxScenes} content scenes (excluding auto outro), got ${contentScenes.length}.`,
+        `Format "${formatSpec.id}" requires ${minScenes} to ${maxScenes} content scenes, got ${contentScenes.length}.`,
       );
     }
 
     const allowedSet = new Set<string>(formatSpec.allowedTypes);
     if (brollEnabled) {
       allowedSet.add('ai_media_clip');
+    }
+
+    if (firstScene && firstScene.type !== 'hook_title' && !allowedSet.has(firstScene.type)) {
+      errors.push(
+        `Opening receipt scene "${firstScene.id}" uses type "${firstScene.type}", which is not allowed in format "${formatSpec.id}". Allowed: ${[...allowedSet].join(', ')}.`,
+      );
     }
 
     for (const scene of middleScenes) {
@@ -89,15 +119,15 @@ export function validateVarietyRules(
       }
     }
 
-    const presentMiddleTypes = new Set<string>(middleScenes.map((s) => s.type));
+    const presentBodyTypes = new Set<string>(nonCtaScenes.map((s) => s.type));
     for (const req of formatSpec.requiredTypes) {
-      if (!presentMiddleTypes.has(req)) {
+      if (!presentBodyTypes.has(req)) {
         errors.push(`Format "${formatSpec.id}" requires at least one "${req}" scene.`);
       }
     }
 
     if (formatSpec.requiredAnyOf && formatSpec.requiredAnyOf.length > 0) {
-      const hasAny = formatSpec.requiredAnyOf.some((req) => presentMiddleTypes.has(req));
+      const hasAny = formatSpec.requiredAnyOf.some((req) => presentBodyTypes.has(req));
       if (!hasAny) {
         errors.push(
           `Format "${formatSpec.id}" requires at least one of: ${formatSpec.requiredAnyOf.join(', ')}.`,
@@ -116,14 +146,14 @@ export function validateVarietyRules(
     }
   }
 
-  // Consecutive duplicate scene types check
+  // Consecutive duplicate scene types check across all non-CTA scenes (including Scene 1 -> Scene 2)
   const allowedConsecutive = new Set<MiddleSceneType>(formatSpec?.allowConsecutiveTypes ?? []);
-  for (let i = 1; i < middleScenes.length; i++) {
-    const prev = middleScenes[i - 1]!;
-    const curr = middleScenes[i]!;
+  for (let i = 1; i < nonCtaScenes.length; i++) {
+    const prev = nonCtaScenes[i - 1]!;
+    const curr = nonCtaScenes[i]!;
     if (prev.type === curr.type && !allowedConsecutive.has(curr.type as MiddleSceneType)) {
       errors.push(
-        `Middle scenes "${prev.id}" and "${curr.id}" repeat type "${curr.type}" back-to-back. Vary scene types.`,
+        `Scenes "${prev.id}" and "${curr.id}" repeat type "${curr.type}" back-to-back. Vary scene types.`,
       );
     }
   }
@@ -157,14 +187,15 @@ export function validateVarietyRules(
 
   // Anti-repeat hook check against completed recent reels (exclude GENERATING placeholder rows)
   const completedHistory = (options.history ?? []).filter((h) => !h.isGenerating);
-  if (firstScene && firstScene.type === 'hook_title' && completedHistory.length > 0) {
+  if (firstScene && completedHistory.length > 0) {
+    const currentHookHeadline = extractSceneHookHeadline(firstScene, storyboard.title);
     const recent12 = completedHistory.slice(0, 12);
     for (const prev of recent12) {
       if (!prev.hookHeadline) continue;
-      const sim = textJaccardSimilarity(firstScene.headline, prev.hookHeadline);
+      const sim = textJaccardSimilarity(currentHookHeadline, prev.hookHeadline);
       if (sim >= 0.6) {
         errors.push(
-          `Hook headline "${firstScene.headline}" is too similar (${Math.round(sim * 100)}%) to recent reel "${prev.hookHeadline}". Write a fresh angle.`,
+          `Hook headline "${currentHookHeadline}" is too similar (${Math.round(sim * 100)}%) to recent reel "${prev.hookHeadline}". Write a fresh angle.`,
         );
         break;
       }
@@ -182,6 +213,18 @@ export function validateVarietyRules(
         }
       }
     }
+  }
+
+  // Anti-spam engagement bait check on caption & takeaway CTA
+  if (hasSpamEngagementBait(storyboard.caption)) {
+    errors.push(
+      'Caption contains spammy engagement-bait ("Comment KEYWORD", "DM me", or "link in bio"). End with a genuine engineering question instead.',
+    );
+  }
+  if (lastContentScene?.type === 'takeaway_cta' && hasSpamEngagementBait(lastContentScene.ctaText)) {
+    errors.push(
+      'Takeaway CTA contains spammy engagement-bait. Write a concrete technical check or genuine developer question instead.',
+    );
   }
 
   return {

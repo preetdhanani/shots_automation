@@ -37,7 +37,7 @@ export class PipelineQueue {
 
   constructor(store: Store, opts?: { maxConcurrentRenders?: number }) {
     this.store = store;
-    this.maxConcurrentRenders = Math.max(1, Math.min(8, opts?.maxConcurrentRenders ?? 3));
+    this.maxConcurrentRenders = Math.max(1, Math.min(8, opts?.maxConcurrentRenders ?? 2));
     this.emitter.setMaxListeners(100);
   }
 

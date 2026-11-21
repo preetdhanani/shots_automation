@@ -1,7 +1,4 @@
-import {
-  createChannelOutroScene,
-  type ReelStoryboard,
-} from '../schemas/storyboard.js';
+import { createChannelOutroScene, type ReelStoryboard } from '../schemas/storyboard.js';
 import type { ReelFormatId } from './registry.js';
 
 /**
@@ -401,7 +398,7 @@ export const FORMAT_SAMPLE_STORYBOARDS: Record<ReelFormatId, ReelStoryboard> = {
         ctaText: 'Save this benchmark',
         visual: { layout: 'card', transition: 'fade', camera: 'none', emphasis: ['Loops'] },
       },
-      createChannelOutroScene('scene-6'),
+      createChannelOutroScene('scene-5'),
     ],
   },
 
@@ -664,7 +661,7 @@ export const FORMAT_SAMPLE_STORYBOARDS: Record<ReelFormatId, ReelStoryboard> = {
         badge: 'SMART BUDGET',
         headline: 'Spend Pennies, Save Hours',
         takeaway: 'Cheaper inference makes multi-step verification the highest-ROI habit in dev.',
-        ctaText: 'Follow for weekly AI math',
+        ctaText: 'Audit your agent token spend',
         visual: { layout: 'card', transition: 'fade', camera: 'none', emphasis: ['Pennies'] },
       },
       createChannelOutroScene('scene-6'),

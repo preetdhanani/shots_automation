@@ -3,6 +3,8 @@ import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type ChecklistStepsScene as ChecklistData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames, getActiveBeatIndex } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: ChecklistData;
@@ -12,9 +14,15 @@ export const ChecklistStepsScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('checklist_steps', scene.visual?.layout);
 
   const isSteps = scene.mode === 'steps';
+  const stepBeats = computeBeatFrames(durationInFrames, Math.max(1, scene.items.length), words, {
+    startFrac: 0.12,
+    endFrac: 0.78,
+  });
+  const activeStepIdx = getActiveBeatIndex(frame, stepBeats);
 
   if (layout === 'cards') {
     return (
@@ -50,24 +58,27 @@ export const ChecklistStepsScene: React.FC<Props> = ({ scene }) => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {scene.items.map((item, idx) => {
             const itemSpring = spring({
-              frame: Math.max(0, frame - (4 + idx * 5)),
+              frame: Math.max(0, frame - idx * 4),
               fps,
               config: { damping: 16, stiffness: 145 },
             });
+            const isSpotlight = idx === activeStepIdx;
             return (
               <div
                 key={idx}
                 style={{
-                  opacity: itemSpring,
-                  transform: `translateY(${interpolate(itemSpring, [0, 1], [20, 0])}px)`,
-                  backgroundColor: palette.surface,
-                  border: `1.5px solid ${idx === 0 ? palette.accentBorder : palette.surfaceBorder}`,
+                  opacity: itemSpring * (isSpotlight ? 1 : 0.8),
+                  transform: `translateY(${interpolate(itemSpring, [0, 1], [20, 0])}px) scale(${isSpotlight ? 1.015 : 1})`,
+                  backgroundColor: isSpotlight ? palette.accentSoft : palette.surface,
+                  border: `1.5px solid ${isSpotlight ? palette.accentBorder : palette.surfaceBorder}`,
                   borderRadius: 22,
                   padding: '20px 24px',
                   display: 'flex',
                   alignItems: 'flex-start',
                   gap: 18,
-                  boxShadow: '0 14px 36px rgba(0,0,0,0.45)',
+                  boxShadow: isSpotlight
+                    ? `0 14px 36px rgba(0,0,0,0.45), 0 0 24px ${palette.glow}`
+                    : '0 14px 36px rgba(0,0,0,0.45)',
                 }}
               >
                 <div
@@ -160,20 +171,24 @@ export const ChecklistStepsScene: React.FC<Props> = ({ scene }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         {scene.items.map((item, idx) => {
           const itemSpring = spring({
-            frame: Math.max(0, frame - (5 + idx * 6)),
+            frame: Math.max(0, frame - idx * 4),
             fps,
             config: { damping: 16, stiffness: 145 },
           });
+          const isSpotlight = idx === activeStepIdx;
           return (
             <div
               key={idx}
               style={{
-                opacity: itemSpring,
-                transform: `translateX(${interpolate(itemSpring, [0, 1], [24, 0])}px)`,
+                opacity: itemSpring * (isSpotlight ? 1 : 0.78),
+                transform: `translateX(${interpolate(itemSpring, [0, 1], [24, 0])}px) scale(${isSpotlight ? 1.015 : 1})`,
                 display: 'flex',
                 alignItems: 'flex-start',
                 gap: 18,
-                paddingBottom: idx < scene.items.length - 1 ? 18 : 0,
+                padding: '10px 14px',
+                borderRadius: 14,
+                backgroundColor: isSpotlight ? palette.accentSoft : 'transparent',
+                paddingBottom: idx < scene.items.length - 1 ? 18 : 10,
                 borderBottom:
                   idx < scene.items.length - 1 ? '1px solid rgba(255,255,255,0.08)' : undefined,
               }}

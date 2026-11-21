@@ -7,6 +7,8 @@ import {
 } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames, getActiveBeatIndex } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: BenchmarkData;
@@ -17,14 +19,49 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { isFirst, durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('benchmark_bars', scene.visual?.layout);
 
-  const cardSpring = spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
+  const cardSpring = isFirst
+    ? 1
+    : spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
+  const barBeatFrames = computeBeatFrames(durationInFrames, Math.max(1, scene.bars.length), words, {
+    startFrac: 0.12,
+    endFrac: 0.78,
+  });
+  const activeBarIdx = getActiveBeatIndex(frame, barBeatFrames);
+  const latePulse = interpolate(
+    frame,
+    [Math.max(10, Math.round(durationInFrames * 0.5)), Math.max(20, durationInFrames - 6)],
+    [1, 1.03],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
   const maxVal = Math.max(1, ...scene.bars.map((b) => b.value));
+  const minVal = Math.min(...scene.bars.map((b) => b.value));
 
   const formatVal = (raw: number, target: number, progress: number) => {
     const val = progress >= 0.99 ? target : raw;
     return Number.isInteger(target) ? Math.round(val).toString() : val.toFixed(1);
+  };
+
+  const formatValueWithUnit = (valStr: string, unit: string): string => {
+    const clean = unit.trim();
+    if (!clean) return valStr;
+    const lower = clean.toLowerCase();
+    if (lower === 'score' || lower === 'index' || lower === 'points') {
+      return valStr;
+    }
+    if (/^[%$€£°+x]|^(ms|s|k|m|b)$/i.test(clean)) {
+      return `${valStr}${clean}`;
+    }
+    return `${valStr} ${clean}`;
+  };
+
+  const getVisualRatio = (value: number): number => {
+    if (scene.bars.length >= 2 && maxVal > minVal && minVal / maxVal > 0.78) {
+      return 0.58 + 0.42 * ((value - minVal) / (maxVal - minVal));
+    }
+    return value / maxVal;
   };
 
   if (layout === 'columns') {
@@ -84,13 +121,19 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
           }}
         >
           {scene.bars.map((bar, idx) => {
-            const barSpring = spring({
-              frame: Math.max(0, frame - (6 + idx * 5)),
-              fps,
-              config: { damping: 16, stiffness: 115 },
-            });
-            const barHeight = Math.max(24, (bar.value / maxVal) * 340 * barSpring);
+            const barSpring = isFirst
+              ? 1
+              : spring({
+                  frame: Math.max(0, frame - idx * 4),
+                  fps,
+                  config: { damping: 16, stiffness: 115 },
+                });
             const isWinner = Boolean(bar.isWinner);
+            const isSpotlight = idx === activeBarIdx;
+            const barHeight = Math.max(
+              24,
+              getVisualRatio(bar.value) * 340 * barSpring * (isWinner ? latePulse : 1),
+            );
             return (
               <div
                 key={`${bar.label}-${idx}`}
@@ -101,29 +144,36 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
                   alignItems: 'center',
                   gap: 12,
                   minWidth: 0,
+                  transform: `scale(${isSpotlight ? 1.03 : 1})`,
                 }}
               >
                 <span
                   style={{
                     fontFamily: fonts.mono,
-                    fontSize: 28,
+                    fontSize: 30,
                     fontWeight: 700,
-                    color: isWinner ? palette.accent : '#F4F4F5',
+                    color: isWinner || isSpotlight ? palette.accent : '#F4F4F5',
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {formatVal(bar.value * barSpring, bar.value, barSpring)}
-                  {scene.metricUnit}
+                  {formatValueWithUnit(
+                    formatVal(bar.value * barSpring, bar.value, barSpring),
+                    scene.metricUnit,
+                  )}
                 </span>
                 <div
                   style={{
-                    width: '78%',
+                    width: '68%',
+                    maxWidth: 148,
                     height: barHeight,
                     borderRadius: '16px 16px 6px 6px',
                     background: isWinner
                       ? `linear-gradient(180deg, #FFFFFF 0%, ${palette.accent} 40%, ${palette.secondary} 100%)`
-                      : 'linear-gradient(180deg, #71717A, #3F3F46)',
-                    boxShadow: isWinner ? `0 0 28px ${palette.glow}` : undefined,
+                      : isSpotlight
+                        ? `linear-gradient(180deg, ${palette.accent}, #3F3F46)`
+                        : 'linear-gradient(180deg, #71717A, #3F3F46)',
+                    boxShadow:
+                      isWinner || isSpotlight ? `0 0 28px ${palette.glow}` : undefined,
                   }}
                 />
               </div>
@@ -138,15 +188,39 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
               key={`lbl-${idx}`}
               style={{
                 flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 6,
                 textAlign: 'center',
-                fontFamily: fonts.display,
-                fontSize: 22,
-                fontWeight: bar.isWinner ? 700 : 500,
-                color: bar.isWinner ? palette.accent : '#D4D4D8',
-                lineHeight: 1.2,
+                minWidth: 0,
               }}
             >
-              {bar.label}
+              <span
+                style={{
+                  fontFamily: fonts.display,
+                  fontSize: 23,
+                  fontWeight: bar.isWinner ? 700 : 500,
+                  color: bar.isWinner ? palette.accent : '#D4D4D8',
+                  lineHeight: 1.2,
+                }}
+              >
+                {bar.label}
+              </span>
+              {bar.note ? (
+                <span
+                  style={{
+                    fontFamily: fonts.mono,
+                    fontSize: 17,
+                    color: bar.isWinner ? palette.accent : '#A1A1AA',
+                    backgroundColor: bar.isWinner ? palette.accentSoft : 'rgba(255,255,255,0.06)',
+                    padding: '3px 10px',
+                    borderRadius: 8,
+                  }}
+                >
+                  {bar.note}
+                </span>
+              ) : null}
             </div>
           ))}
         </div>
@@ -201,29 +275,36 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {sorted.map((bar, idx) => {
-            const rowSpring = spring({
-              frame: Math.max(0, frame - (4 + idx * 5)),
-              fps,
-              config: { damping: 16, stiffness: 135 },
-            });
+            const rowSpring = isFirst
+              ? 1
+              : spring({
+                  frame: Math.max(0, frame - idx * 4),
+                  fps,
+                  config: { damping: 16, stiffness: 135 },
+                });
             const isTop = idx === 0 || Boolean(bar.isWinner);
+            const isSpotlight = idx === activeBarIdx;
             return (
               <div
                 key={`${bar.label}-${idx}`}
                 style={{
                   opacity: rowSpring,
-                  transform: `translateX(${interpolate(rowSpring, [0, 1], [32, 0])}px)`,
+                  transform: `translateX(${interpolate(rowSpring, [0, 1], [32, 0])}px) scale(${isSpotlight ? 1.015 : isTop ? (latePulse - 1) * 0.6 + 1 : 1})`,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 18,
                   padding: '22px 24px',
                   borderRadius: 22,
-                  backgroundColor: isTop ? palette.accentSoft : palette.surface,
-                  border: isTop
-                    ? `2px solid ${palette.accentBorder}`
-                    : `1px solid ${palette.surfaceBorder}`,
-                  boxShadow: isTop ? `0 16px 40px rgba(0,0,0,0.45), 0 0 24px ${palette.glow}` : undefined,
+                  backgroundColor: isTop || isSpotlight ? palette.accentSoft : palette.surface,
+                  border:
+                    isTop || isSpotlight
+                      ? `2px solid ${palette.accentBorder}`
+                      : `1px solid ${palette.surfaceBorder}`,
+                  boxShadow:
+                    isTop || isSpotlight
+                      ? `0 16px 40px rgba(0,0,0,0.45), 0 0 24px ${palette.glow}`
+                      : undefined,
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0 }}>
@@ -279,8 +360,10 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {formatVal(bar.value * rowSpring, bar.value, rowSpring)}
-                  {scene.metricUnit}
+                  {formatValueWithUnit(
+                    formatVal(bar.value * rowSpring, bar.value, rowSpring),
+                    scene.metricUnit,
+                  )}
                 </span>
               </div>
             );
@@ -358,13 +441,19 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
         {scene.bars.map((bar, idx) => {
-          const barSpring = spring({
-            frame: Math.max(0, frame - (6 + idx * 4)),
-            fps,
-            config: { damping: 18, stiffness: 110 },
-          });
-          const pct = Math.max(4, (bar.value / maxVal) * 100 * barSpring);
+          const barSpring = isFirst
+            ? 1
+            : spring({
+                frame: Math.max(0, frame - idx * 4),
+                fps,
+                config: { damping: 18, stiffness: 110 },
+              });
           const isWinner = Boolean(bar.isWinner);
+          const isSpotlight = idx === activeBarIdx;
+          const pct = Math.max(
+            4,
+            Math.min(100, getVisualRatio(bar.value) * 100 * barSpring * (isWinner ? latePulse : 1)),
+          );
 
           return (
             <div
@@ -375,12 +464,15 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
                 gap: 10,
                 padding: '16px 20px',
                 borderRadius: 18,
-                backgroundColor: isWinner
-                  ? 'rgba(255, 255, 255, 0.05)'
-                  : 'rgba(255, 255, 255, 0.025)',
-                border: isWinner
-                  ? `1.5px solid ${palette.accentBorder}`
-                  : '1px solid rgba(255, 255, 255, 0.06)',
+                transform: `scale(${isSpotlight ? 1.015 : 1})`,
+                backgroundColor:
+                  isWinner || isSpotlight
+                    ? 'rgba(255, 255, 255, 0.06)'
+                    : 'rgba(255, 255, 255, 0.025)',
+                border:
+                  isWinner || isSpotlight
+                    ? `1.5px solid ${palette.accentBorder}`
+                    : '1px solid rgba(255, 255, 255, 0.06)',
               }}
             >
               <div
@@ -428,8 +520,10 @@ export const BenchmarkBarsScene: React.FC<Props> = ({ scene }) => {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {formatVal(bar.value * barSpring, bar.value, barSpring)}
-                  {scene.metricUnit}
+                  {formatValueWithUnit(
+                    formatVal(bar.value * barSpring, bar.value, barSpring),
+                    scene.metricUnit,
+                  )}
                 </span>
               </div>
 

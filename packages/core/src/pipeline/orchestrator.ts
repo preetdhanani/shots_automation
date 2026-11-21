@@ -8,6 +8,7 @@ import type {
   TopicRecord,
   WorkerSource,
 } from '../db/store.js';
+import { enrichTopicForScripting } from '../discovery/fetcher.js';
 import { alignStoryboardWithWhisperAnchors, runWhisperAndAlign } from '../generation/aligner.js';
 import {
   generateVeoBrollClip,
@@ -39,6 +40,7 @@ import {
 } from '../media/sourceVisuals.js';
 import { InstagramGraphPublisher } from '../publish/instagram.js';
 import type { PublishResult } from '../publish/publisher.js';
+import { checkPublishSpacing, type PublishSpacingStatus } from '../publish/spacing.js';
 import type { CaptionToken, ReelCaptionsFile, SceneTiming } from '../schemas/media.js';
 import {
   sanitizeAssetSegment,
@@ -504,6 +506,12 @@ export class ReelOrchestrator {
     });
   }
 
+  getPublishSpacingStatus(nowMs = Date.now()): PublishSpacingStatus {
+    const settings = this.getEffectiveSettings();
+    const latestPublished = this.store.getLatestPublishedReel();
+    return checkPublishSpacing(latestPublished?.publishedAt ?? null, settings.minPublishSpacingHours, nowMs);
+  }
+
   async publishDryRun(reelId: string): Promise<PublishResult> {
     const reel = this.store.getReel(reelId);
     if (!reel) throw new Error(`Reel ${reelId} not found.`);
@@ -515,7 +523,7 @@ export class ReelOrchestrator {
     return publisher.publish(reel, { dryRun: true });
   }
 
-  startPublishAsync(reelId: string): PipelineRunRecord {
+  startPublishAsync(reelId: string, opts: { force?: boolean } = {}): PipelineRunRecord {
     const reel = this.store.getReel(reelId);
     if (!reel) throw new Error(`Reel ${reelId} not found.`);
     if (reel.isSample) {
@@ -541,6 +549,7 @@ export class ReelOrchestrator {
       execute: async (runId, signal) => {
         const result = await publisher.publish(reel, {
           dryRun: false,
+          bypassSpacing: opts.force === true,
           signal,
           onProgress: (step, pct, message) => {
             this.queue.updateProgress(runId, step, pct, message, { forcePersist: true });
@@ -690,8 +699,14 @@ export class ReelOrchestrator {
           10,
           `Writing ${varietyPlan.format} storyboard with ${endpoint.name} (${endpoint.model})...`,
         );
+        const enrichedTopic = await enrichTopicForScripting(opts.topic, {
+          signal: opts.signal,
+        });
+        if (enrichedTopic.summary !== opts.topic.summary) {
+          this.store.updateTopicSummary(opts.topic.id, enrichedTopic.summary);
+        }
         storyboard = await generateStoryboard(env, endpoint, {
-          topic: opts.topic,
+          topic: enrichedTopic,
           brandHandle: settings.brandHandle,
           varietyPlan,
           history,
@@ -867,11 +882,13 @@ export class ReelOrchestrator {
     const audioAssets = ensureGeneratedAudioAssets(this.storage.musicDir, {
       mood: musicMood,
       seed,
+      sfxDir: this.storage.sfxDir,
     });
     const sfxCues = buildSfxCuesForStoryboard(
       opts.storyboard,
       opts.captionsFile.sceneTimings,
       audioAssets.sfx,
+      opts.captionsFile.captions,
     );
 
     await encodeDeliveryReel({
@@ -892,7 +909,7 @@ export class ReelOrchestrator {
       throw new Error(`Rendered MP4 failed Meta spec check: ${specReport.errors.join(' ')}`);
     }
 
-    await extractCoverFrame(stagedFinalPath, stagedCoverPath, 0.8, opts.signal);
+    await extractCoverFrame(stagedFinalPath, stagedCoverPath, 0, opts.signal);
 
     // Delete large uncompressed raw Remotion file before promoting
     if (fs.existsSync(remotionRawPath)) {

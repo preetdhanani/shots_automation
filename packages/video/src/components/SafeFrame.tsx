@@ -1,7 +1,8 @@
 import React from 'react';
-import { AbsoluteFill } from 'remotion';
+import { AbsoluteFill, interpolate, useCurrentFrame } from 'remotion';
 import type { ContentPillar } from '@post/core';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
 import { SAFE_ZONE } from '../theme.js';
 import { BackgroundRenderer } from './backgrounds/BackgroundRenderer.js';
 
@@ -19,7 +20,17 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
   totalScenes,
   children,
 }) => {
+  const frame = useCurrentFrame();
+  const { isLast, durationInFrames } = useSceneRuntime();
   const { palette, fonts } = useReelStyle();
+  const cleanHandle = brandHandle.trim();
+  const chromeOpacity =
+    isLast && durationInFrames > 18
+      ? interpolate(frame, [durationInFrames - 12, durationInFrames - 1], [1, 0], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        })
+      : 1;
 
   return (
     <AbsoluteFill
@@ -43,6 +54,7 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 16,
+          opacity: chromeOpacity,
           zIndex: 5,
         }}
       >
@@ -67,7 +79,7 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
           >
             {palette.label}
           </span>
-          {brandHandle ? (
+          {cleanHandle ? (
             <span
               style={{
                 fontFamily: fonts.mono,
@@ -76,7 +88,7 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
                 marginLeft: 6,
               }}
             >
-              {brandHandle}
+              {cleanHandle}
             </span>
           ) : null}
         </div>

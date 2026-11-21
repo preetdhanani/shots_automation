@@ -16,6 +16,7 @@ import {
   REEL_FORMAT_IDS,
   REEL_FORMATS,
   ReelStoryboardSchema,
+  repairSceneEmphasis,
   restyleStoryboard,
   toFlatStoryboardPayload,
   validateStoryboardEditorial,
@@ -103,6 +104,7 @@ describe('Video Variety Engine - Planner, Fingerprints, Formats & Gates', () => 
         );
       }
 
+      // Legacy channel outro (if present) must still be excluded from fingerprint sceneTypes
       const fp = computeReelFingerprint({
         id: `sim-${i}`,
         title: `Sim Reel ${i}`,
@@ -111,9 +113,9 @@ describe('Video Variety Engine - Planner, Fingerprints, Formats & Gates', () => 
         storyboard: styled,
       });
 
-      // Channel outro must be excluded from fingerprint sceneTypes
       const contentCount = styled.scenes.filter((s) => !isChannelOutroScene(s)).length;
       expect(fp.sceneTypes).toHaveLength(contentCount);
+      expect(isChannelOutroScene(styled.scenes[styled.scenes.length - 1]!)).toBe(true);
 
       if (history[0]) {
         const sim = fingerprintSimilarity(fp, history[0]);
@@ -243,5 +245,58 @@ describe('Video Variety Engine - Planner, Fingerprints, Formats & Gates', () => 
       );
     }
     expect(new Set(picked).size).toBe(7);
+  });
+
+  it('repairs missing emphasis verbatim, excludes diff on single-mode code_compare, and rejects spammy engagement bait', () => {
+    const sb = structuredClone(FORMAT_SAMPLE_STORYBOARDS.hot_take);
+    const firstScene = sb.scenes[0];
+    if (firstScene?.type === 'hook_title') {
+      firstScene.headline = 'Local Agent Loops Just Replaced Cron';
+      firstScene.visual = { ...firstScene.visual, emphasis: ['NonexistentWord'] };
+      const repaired = repairSceneEmphasis(firstScene);
+      expect(repaired?.length).toBeGreaterThan(0);
+      expect(
+        repaired?.some((tok) =>
+          firstScene.headline.toLowerCase().includes(tok.toLowerCase()),
+        ),
+      ).toBe(true);
+    }
+
+    const codeSingle = structuredClone(FORMAT_SAMPLE_STORYBOARDS.deep_dive_demo);
+    for (const s of codeSingle.scenes) {
+      if (s.type === 'code_compare') {
+        s.mode = 'single';
+        s.beforeCode = undefined;
+      }
+    }
+    for (let seed = 0; seed < 12; seed++) {
+      const planned = planReelVariety({
+        pillar: 'coding_practices',
+        history: [],
+        requestedFormat: 'deep_dive_demo',
+        seed,
+      });
+      const visualed = applyVisualPlan(codeSingle, {
+        style: planned.style,
+        format: planned.format,
+        history: [],
+        seed,
+      });
+      for (const s of visualed.scenes) {
+        if (s.type === 'code_compare') {
+          expect(s.visual?.layout).not.toBe('diff');
+        }
+      }
+    }
+
+    const spammy = structuredClone(FORMAT_SAMPLE_STORYBOARDS.hot_take);
+    spammy.caption = 'Comment GUIDE and DM me for the script.';
+    const ctaScene = spammy.scenes.find((s) => s.type === 'takeaway_cta');
+    if (ctaScene?.type === 'takeaway_cta') {
+      ctaScene.ctaText = 'Comment GUIDE below!';
+    }
+    const baitRes = validateVarietyRules(spammy, { formatSpec: REEL_FORMATS.hot_take });
+    expect(baitRes.ok).toBe(false);
+    expect(baitRes.errors.some((e) => e.toLowerCase().includes('engagement-bait'))).toBe(true);
   });
 });

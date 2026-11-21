@@ -460,4 +460,229 @@ describe('Hono Server API Security, Range Streaming, Staleness, and Lifecycle', 
     });
     expect(lockedRes.status).toBe(409);
   });
+
+  it('previews, cleans, and restores Discover topics by retention interval', async () => {
+    const app = setupApp();
+    const headers = {
+      Host: '127.0.0.1:4310',
+      'X-Post-CSRF': '1',
+      'Content-Type': 'application/json',
+    };
+    const nowMs = Date.now();
+    const dayMs = 86_400_000;
+
+    const { topics } = store.upsertTopics([
+      {
+        pillar: 'ai_news',
+        title: 'Fresh Today News',
+        summary: 'Fresh summary',
+        sourceName: 'HN',
+        sourceUrl: 'https://example.com/fresh',
+        canonicalUrlHash: 'hash-fresh',
+        topicFingerprint: 'fresh-today-news',
+        publishedAt: new Date(nowMs - 1 * dayMs).toISOString(),
+        score: 95,
+        rawPayloadJson: '{}',
+      },
+      {
+        pillar: 'benchmarks',
+        title: 'Two Week Old Benchmark',
+        summary: 'Old summary',
+        sourceName: 'Blog',
+        sourceUrl: 'https://example.com/2w',
+        canonicalUrlHash: 'hash-2w',
+        topicFingerprint: 'two-week-old-benchmark',
+        publishedAt: new Date(nowMs - 14 * dayMs).toISOString(),
+        score: 82,
+        rawPayloadJson: '{}',
+      },
+      {
+        pillar: 'harnesses',
+        title: 'Old Used Topic',
+        summary: 'Already used',
+        sourceName: 'GH',
+        sourceUrl: 'https://example.com/used',
+        canonicalUrlHash: 'hash-used',
+        topicFingerprint: 'old-used-topic',
+        publishedAt: new Date(nowMs - 45 * dayMs).toISOString(),
+        score: 70,
+        rawPayloadJson: '{}',
+        status: 'USED',
+      },
+    ]);
+
+    const previewRes = await app.request('/api/topics/clean/preview', {
+      headers: { Host: '127.0.0.1:4310' },
+    });
+    expect(previewRes.status).toBe(200);
+    const previewJson = (await previewRes.json()) as {
+      totalNew: number;
+      intervals: Record<'3d' | '7d' | '30d', { keep: number; remove: number }>;
+    };
+    expect(previewJson.totalNew).toBe(2);
+    expect(previewJson.intervals['7d']).toEqual({ keep: 1, remove: 1 });
+    expect(previewJson.intervals['30d']).toEqual({ keep: 2, remove: 0 });
+
+    const invalidClean = await app.request('/api/topics/clean', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ interval: '99d' }),
+    });
+    expect(invalidClean.status).toBe(400);
+
+    const cleanRes = await app.request('/api/topics/clean', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ interval: '7d' }),
+    });
+    expect(cleanRes.status).toBe(200);
+    const cleanJson = (await cleanRes.json()) as {
+      interval: string;
+      removedCount: number;
+      keptCount: number;
+      removedIds: string[];
+    };
+    expect(cleanJson.interval).toBe('7d');
+    expect(cleanJson.removedCount).toBe(1);
+    expect(cleanJson.keptCount).toBe(1);
+    expect(cleanJson.removedIds).toEqual([topics[1]!.id]);
+
+    const listAfterClean = await app.request('/api/topics?status=NEW', {
+      headers: { Host: '127.0.0.1:4310' },
+    });
+    const listJson = (await listAfterClean.json()) as { topics: Array<{ id: string }> };
+    expect(listJson.topics.map((t) => t.id)).toEqual([topics[0]!.id]);
+    expect(store.getTopic(topics[2]!.id)?.status).toBe('USED');
+
+    const emptyRestore = await app.request('/api/topics/restore', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: [] }),
+    });
+    expect(emptyRestore.status).toBe(400);
+
+    const restoreRes = await app.request('/api/topics/restore', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: cleanJson.removedIds }),
+    });
+    expect(restoreRes.status).toBe(200);
+    const restoreJson = (await restoreRes.json()) as { restoredCount: number };
+    expect(restoreJson.restoredCount).toBe(1);
+    expect(store.getTopic(topics[1]!.id)?.status).toBe('NEW');
+  });
+
+  it('defaults BRAND_HANDLE empty and musicVolumeDb -17, syncs PATCH caption/hashtags, and enforces 429 publish spacing', async () => {
+    const env = loadEnv({
+      DATA_DIR: tmpDir,
+      META_IG_USER_ID: '178414000',
+      META_ACCESS_TOKEN: 'meta_tok',
+    });
+    expect(env.BRAND_HANDLE).toBe('');
+
+    const app = setupApp({
+      META_IG_USER_ID: '178414000',
+      META_ACCESS_TOKEN: 'meta_tok',
+    });
+    const headers = {
+      Host: '127.0.0.1:4310',
+      Origin: 'http://127.0.0.1:4310',
+      'X-Post-CSRF': '1',
+      'Content-Type': 'application/json',
+    };
+
+    const settingsGet = await app.request('/api/settings', {
+      headers: { Host: '127.0.0.1:4310' },
+    });
+    expect(settingsGet.status).toBe(200);
+    const settingsJson = (await settingsGet.json()) as {
+      settings: { brandHandle: string; musicVolumeDb: number; minPublishSpacingHours: number };
+    };
+    expect(settingsJson.settings.brandHandle).toBe('');
+    expect(settingsJson.settings.musicVolumeDb).toBe(-17);
+    expect(settingsJson.settings.minPublishSpacingHours).toBe(6);
+
+    const spacingPatch = await app.request('/api/settings', {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ minPublishSpacingHours: 8 }),
+    });
+    expect(spacingPatch.status).toBe(200);
+    const spacingPatchJson = (await spacingPatch.json()) as {
+      settings: { minPublishSpacingHours: number };
+    };
+    expect(spacingPatchJson.settings.minPublishSpacingHours).toBe(8);
+
+    // Create a recently published reel + a new READY_FOR_REVIEW real reel
+    const publishedReel = store.createReel({
+      topicId: null,
+      isSample: false,
+      pillar: 'ai_news',
+      status: 'READY_FOR_REVIEW',
+      title: 'Recently Published',
+      storyboard: SAMPLE_DEMO_STORYBOARD,
+      caption: 'Old caption',
+      hashtags: ['#ai', '#dev', '#llm'],
+      voiceName: 'Puck',
+    });
+    store.updateReel(publishedReel.id, {
+      status: 'PUBLISHED',
+      publishedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+    });
+
+    const candidate = store.createReel({
+      topicId: null,
+      isSample: false,
+      pillar: 'benchmarks',
+      status: 'READY_FOR_REVIEW',
+      title: 'Candidate Reel',
+      storyboard: SAMPLE_DEMO_STORYBOARD,
+      caption: 'Initial caption',
+      hashtags: ['#ai', '#dev', '#llm'],
+      voiceName: 'Puck',
+    });
+
+    // PATCH caption/hashtags syncs into storyboard
+    const patchRes = await app.request(`/api/reels/${candidate.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        caption: 'Synced top caption',
+        hashtags: ['#ai', '#coding', '#benchmarks'],
+      }),
+    });
+    expect(patchRes.status).toBe(200);
+    const patchJson = (await patchRes.json()) as {
+      reel: { caption: string; storyboard: { caption: string; hashtags: string[] } };
+    };
+    expect(patchJson.reel.storyboard.caption).toBe('Synced top caption');
+    expect(patchJson.reel.storyboard.hashtags).toEqual(['#ai', '#coding', '#benchmarks']);
+
+    // GET /api/reels/:id includes blocked publishSpacing status
+    const detailRes = await app.request(`/api/reels/${candidate.id}`, {
+      headers: { Host: '127.0.0.1:4310' },
+    });
+    expect(detailRes.status).toBe(200);
+    const detailJson = (await detailRes.json()) as {
+      publishSpacing: { allowed: boolean; minSpacingHours: number };
+    };
+    expect(detailJson.publishSpacing.allowed).toBe(false);
+    expect(detailJson.publishSpacing.minSpacingHours).toBe(8);
+
+    // POST /api/reels/:id/publish returns HTTP 429 before starting a run
+    const blockedRes = await app.request(`/api/reels/${candidate.id}/publish`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ dryRun: false }),
+    });
+    expect(blockedRes.status).toBe(429);
+
+    // Passing force: true bypasses spacing guardrail
+    const forcedRes = await app.request(`/api/reels/${candidate.id}/publish`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ dryRun: false, force: true }),
+    });
+    expect(forcedRes.status).toBe(202);
+  });
 });

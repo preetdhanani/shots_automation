@@ -1,7 +1,9 @@
 import React from 'react';
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type SocialPostScene as SocialPostData } from '@post/core';
+import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
 
 interface Props {
   scene: SocialPostData;
@@ -22,9 +24,16 @@ export const SocialPostScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames } = useSceneRuntime();
   const layout = resolveLayout('social_post', scene.visual?.layout);
 
   const cardSpring = spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
+  const readSweep = interpolate(
+    frame,
+    [4, Math.max(24, durationInFrames - 6)],
+    [0.12, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
   const platformLabel = PLATFORM_BADGES[scene.platform] ?? scene.platform.toUpperCase();
 
   if (layout === 'minimal') {
@@ -63,8 +72,26 @@ export const SocialPostScene: React.FC<Props> = ({ scene }) => {
             color: '#FFFFFF',
           }}
         >
-          &ldquo;{scene.postText}&rdquo;
+          &ldquo;<KineticText text={scene.postText} emphasis={scene.visual?.emphasis} />&rdquo;
         </p>
+
+        <div
+          style={{
+            width: 240,
+            height: 4,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.08)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.round(readSweep * 100)}%`,
+              height: '100%',
+              backgroundColor: palette.accent,
+            }}
+          />
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <span style={{ fontFamily: fonts.display, fontSize: 28, fontWeight: 700, color: '#F4F4F5' }}>
@@ -154,8 +181,26 @@ export const SocialPostScene: React.FC<Props> = ({ scene }) => {
           color: '#FAFAFA',
         }}
       >
-        &ldquo;{scene.postText}&rdquo;
+        &ldquo;<KineticText text={scene.postText} emphasis={scene.visual?.emphasis} />&rdquo;
       </p>
+
+      <div
+        style={{
+          width: '100%',
+          height: 3,
+          borderRadius: 999,
+          backgroundColor: 'rgba(255,255,255,0.08)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.round(readSweep * 100)}%`,
+            height: '100%',
+            backgroundColor: palette.accent,
+          }}
+        />
+      </div>
 
       {scene.contextLabel ? (
         <div

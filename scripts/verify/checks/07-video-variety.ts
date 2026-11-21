@@ -169,9 +169,13 @@ export const checkVideoVariety: VerifyCheck = {
         }
       }
 
-      // Verify no reel repeats the exact same transition back-to-back
+      // Verify each reel ends with the channel outro and no reel repeats the exact same transition back-to-back
       for (const r of autoReels) {
         const scenes = r.storyboard.scenes;
+        const lastScene = scenes[scenes.length - 1];
+        if (!lastScene || !isChannelOutroScene(lastScene)) {
+          throw new Error(`Reel ${r.id} did not end with the default channel outro scene`);
+        }
         for (let s = 1; s < scenes.length; s++) {
           const prevT = scenes[s - 1]?.visual?.transition;
           const currT = scenes[s]?.visual?.transition;

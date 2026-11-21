@@ -111,13 +111,41 @@ function contentScenesOf(storyboard: ReelStoryboard): ReelScene[] {
   return storyboard.scenes.filter((scene) => !isChannelOutroScene(scene));
 }
 
+export function extractSceneHookHeadline(
+  scene: ReelScene | undefined,
+  fallbackTitle: string,
+): string {
+  if (!scene) return fallbackTitle;
+  switch (scene.type) {
+    case 'hook_title':
+    case 'news_quote_card':
+    case 'source_spotlight':
+    case 'takeaway_cta':
+      return scene.headline;
+    case 'benchmark_bars':
+    case 'code_compare':
+    case 'terminal_demo':
+    case 'versus_split':
+    case 'checklist_steps':
+    case 'timeline':
+    case 'line_chart':
+    case 'countdown_item':
+      return scene.title;
+    case 'big_stat':
+      return `${scene.value} ${scene.label}`.trim();
+    case 'myth_fact':
+      return scene.myth;
+    default:
+      return fallbackTitle;
+  }
+}
+
 export function computeReelFingerprint(reel: FingerprintableReel): ReelFingerprint {
   const sb = reel.storyboard;
   const style = sb.style ?? DEFAULT_REEL_STYLE;
   const scenes = contentScenesOf(sb);
   const firstScene = scenes[0];
-  const hookHeadline =
-    firstScene && firstScene.type === 'hook_title' ? firstScene.headline : sb.title;
+  const hookHeadline = extractSceneHookHeadline(firstScene, sb.title);
   const openingWords = firstScene ? extractOpeningWords(firstScene.narration, 3) : '';
 
   return {

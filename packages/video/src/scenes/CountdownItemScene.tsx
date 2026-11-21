@@ -3,6 +3,7 @@ import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type CountdownItemScene as CountdownData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
 
 interface Props {
   scene: CountdownData;
@@ -12,6 +13,7 @@ export const CountdownItemScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames } = useSceneRuntime();
   const layout = resolveLayout('countdown_item', scene.visual?.layout);
 
   const numSpring = spring({ frame, fps, config: { damping: 12, stiffness: 145 } });
@@ -20,6 +22,12 @@ export const CountdownItemScene: React.FC<Props> = ({ scene }) => {
     fps,
     config: { damping: 16, stiffness: 140 },
   });
+  const sweepFrac = interpolate(
+    frame,
+    [4, Math.max(24, durationInFrames - 6)],
+    [0.14, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
 
   if (layout === 'badge_side') {
     return (
@@ -97,7 +105,22 @@ export const CountdownItemScene: React.FC<Props> = ({ scene }) => {
           </div>
         </div>
 
-        <div style={{ height: 1.5, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+        <div
+          style={{
+            height: 3,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.1)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.round(sweepFrac * 100)}%`,
+              height: '100%',
+              backgroundColor: palette.accent,
+            }}
+          />
+        </div>
 
         <p
           style={{
@@ -185,6 +208,22 @@ export const CountdownItemScene: React.FC<Props> = ({ scene }) => {
         <p style={{ margin: 0, fontSize: 32, lineHeight: 1.4, color: '#D4D4D8' }}>
           {scene.detail}
         </p>
+        <div
+          style={{
+            height: 4,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.08)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.round(sweepFrac * 100)}%`,
+              height: '100%',
+              backgroundColor: palette.accent,
+            }}
+          />
+        </div>
       </div>
     </div>
   );

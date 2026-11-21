@@ -68,6 +68,42 @@ describe('Audio Variety Library, Ducking Mix, Source Visuals & Veo B-Roll', () =
     const customFile = path.join(moodCustomDir, 'custom-track.wav');
     fs.copyFileSync(lib.moods.upbeat_pulse, customFile);
     expect(resolveMusicTrackForMood(musicDir, 'upbeat_pulse', 0)).toBe(customFile);
+
+    // User drop-in under data/sfx/pop.wav overrides generated SFX file
+    const sfxDir = path.join(path.dirname(musicDir), 'sfx');
+    fs.mkdirSync(sfxDir, { recursive: true });
+    const customPop = path.join(sfxDir, 'pop.wav');
+    fs.copyFileSync(lib.sfx.pop, customPop);
+    const customLib = ensureMusicAndSfxLibrary(musicDir, sfxDir);
+    expect(customLib.sfx.pop).toBe(customPop);
+  });
+
+  it('places mid-scene foley cues within cap (<=14 total) and respects 550ms minimum spacing', () => {
+    const workDir = makeTmpDir('post-foley-');
+    const lib = ensureMusicAndSfxLibrary(path.join(workDir, 'music'), path.join(workDir, 'sfx'));
+    const sb = FORMAT_SAMPLE_STORYBOARDS.myth_vs_fact;
+    const timings: SceneTiming[] = sb.scenes.map((s, idx) => ({
+      sceneId: s.id,
+      sceneType: s.type,
+      label: s.type,
+      startMs: idx * 3200,
+      endMs: (idx + 1) * 3200,
+      startFrame: idx * 96,
+      durationInFrames: 96,
+    }));
+
+    const cues = buildSfxCuesForStoryboard(sb, timings, lib.sfx, [
+      { text: 'actually', startMs: timings[1]!.startMs + 1400, endMs: timings[1]!.startMs + 1700 },
+    ]);
+    expect(cues[0]!.offsetMs).toBe(35);
+    expect(cues.length).toBeLessThanOrEqual(14);
+    expect(cues.length).toBeGreaterThan(sb.scenes.length);
+
+    // Every pair of cues >= 550ms apart EXCEPT takeaway riser (130ms -> 820ms before scene start)
+    const nonRiserCues = cues.filter((c) => c.path !== lib.sfx.riser);
+    for (let i = 1; i < nonRiserCues.length; i++) {
+      expect(nonRiserCues[i]!.offsetMs - nonRiserCues[i - 1]!.offsetMs).toBeGreaterThanOrEqual(550);
+    }
   });
 
   it('builds transition SFX cues + takeaway riser and encodes spec-valid MP4 with ducking and without music', async () => {

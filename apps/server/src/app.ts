@@ -14,11 +14,13 @@ import {
   checkGeminiHealth,
   checkMetaHealth,
   checkOpenAICompatibleHealth,
+  computeFeedCleanCutoffMs,
   computeFreshness,
   computeReelFingerprint,
   computeStaleness,
   createCustomTopic,
   ensureWhisperModelDownloaded,
+  FeedCleanIntervalSchema,
   fetchAndStoreTopics,
   fetchOpenAICompatibleModels,
   getDefaultAppSettingsFromEnv,
@@ -605,6 +607,7 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       brandHandle: z.string().trim().max(40).optional(),
       musicEnabled: z.boolean().optional(),
       musicVolumeDb: z.number().min(-40).max(-6).optional(),
+      minPublishSpacingHours: z.number().min(0).max(48).optional(),
       activeLlmEndpointId: z.string().trim().min(1).nullable().optional(),
       aiBrollEnabled: z.boolean().optional(),
       voiceRotation: z.boolean().optional(),
@@ -684,6 +687,53 @@ export function createServerApp(deps: ServerAppDeps): Hono {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Invalid custom topic' }, 400);
     }
+  });
+
+  app.get('/api/topics/clean/preview', (c) => {
+    return c.json(deps.store.previewTopicsClean());
+  });
+
+  app.post('/api/topics/clean', async (c) => {
+    const CleanSchema = z.object({
+      interval: FeedCleanIntervalSchema,
+    });
+    const body = await c.req.json().catch(() => null);
+    const parsed = CleanSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          error:
+            parsed.error.issues[0]?.message ?? 'Invalid clean interval. Choose 3d, 7d, or 30d.',
+        },
+        400,
+      );
+    }
+    const cutoffMs = computeFeedCleanCutoffMs(parsed.data.interval);
+    const cutoffIso = new Date(cutoffMs).toISOString();
+    const result = deps.store.cleanTopicsOlderThan(cutoffMs);
+    return c.json({
+      interval: parsed.data.interval,
+      cutoffIso,
+      ...result,
+    });
+  });
+
+  app.post('/api/topics/restore', async (c) => {
+    const RestoreSchema = z.object({
+      ids: z.array(z.string().trim().min(1)).min(1).max(10_000),
+    });
+    const body = await c.req.json().catch(() => null);
+    const parsed = RestoreSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: parsed.error.issues[0]?.message ?? 'Provide at least one topic ID to restore.',
+        },
+        400,
+      );
+    }
+    const restoredCount = deps.store.restoreTopics(parsed.data.ids);
+    return c.json({ restoredCount });
   });
 
   app.patch('/api/topics/:id/dismiss', (c) => {
@@ -773,6 +823,7 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       latestRun: activeRun,
       staleness,
       variety,
+      publishSpacing: deps.orchestrator.getPublishSpacingStatus(),
     });
   });
 
@@ -891,9 +942,11 @@ export function createServerApp(deps: ServerAppDeps): Hono {
     let nextStoryboard = parsed.data.storyboard;
 
     if (nextStoryboard) {
-      // Preserve server-managed assets map (prevent client-injected arbitrary filenames)
+      // Preserve server-managed assets map & sync top-level caption/hashtags
       nextStoryboard = {
         ...nextStoryboard,
+        caption: parsed.data.caption ?? nextStoryboard.caption,
+        hashtags: parsed.data.hashtags ?? nextStoryboard.hashtags,
         ...(existing.storyboard.assets ? { assets: existing.storyboard.assets } : { assets: undefined }),
       };
       const allowAiMediaClip =
@@ -903,6 +956,12 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       if (!editorial.ok) {
         return c.json({ error: editorial.errors.join(' ') }, 400);
       }
+    } else if (parsed.data.caption !== undefined || parsed.data.hashtags !== undefined) {
+      nextStoryboard = {
+        ...existing.storyboard,
+        caption: parsed.data.caption ?? existing.storyboard.caption,
+        hashtags: parsed.data.hashtags ?? existing.storyboard.hashtags,
+      };
     }
 
     const updated = deps.store.updateReel(id, {
@@ -1026,8 +1085,9 @@ export function createServerApp(deps: ServerAppDeps): Hono {
     const reel = deps.store.getReel(id);
     if (!reel) return c.json({ error: 'Reel not found' }, 404);
 
-    const body = (await c.req.json().catch(() => ({}))) as { dryRun?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { dryRun?: unknown; force?: unknown };
     const dryRun = body.dryRun === true;
+    const force = body.force === true;
 
     if (dryRun) {
       try {
@@ -1048,8 +1108,15 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       );
     }
 
+    if (!force) {
+      const spacing = deps.orchestrator.getPublishSpacingStatus();
+      if (!spacing.allowed) {
+        return c.json({ error: spacing.message, publishSpacing: spacing }, 429);
+      }
+    }
+
     try {
-      const run = deps.orchestrator.startPublishAsync(id);
+      const run = deps.orchestrator.startPublishAsync(id, { force });
       return c.json({ run, reelId: id }, 202);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'Publish failed' }, 400);

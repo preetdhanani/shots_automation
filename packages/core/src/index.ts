@@ -9,9 +9,11 @@ export {
   SqliteStore,
   type AlignmentMode,
   type AppSettings,
+  type CleanTopicsResult,
   type CreateLlmEndpointInput,
   type CreateReelInput,
   type CreateTopicInput,
+  type FeedCleanPreview,
   type LlmEndpointRecord,
   type PipelineLogEntry,
   type PipelineRunRecord,
@@ -50,6 +52,8 @@ export {
   tokenizeTitle,
 } from './discovery/dedupe.js';
 export {
+  enrichTopicForScripting,
+  extractArticleFactsFromHtml,
   fetchAndStoreTopics,
   parseFeedXml,
   parseGithubReleases,
@@ -111,6 +115,10 @@ export {
   type WhisperSetupStatus,
 } from './generation/whisperSetup.js';
 export {
+  expandPronunciationForAlignment,
+  normalizeTextForTts,
+} from './generation/pronunciation.js';
+export {
   alignStoryboardWithWhisperAnchors,
   extractWhisperWordAnchors,
   normalizeSpokenWord,
@@ -136,6 +144,7 @@ export {
 export {
   buildDeliveryFfmpegArgs,
   checkFfmpegAvailability,
+  concatVoiceSegmentsWithPause,
   detectGeminiAudioInput,
   encodeDeliveryReel,
   extractCoverFrame,

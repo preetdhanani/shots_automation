@@ -15,6 +15,60 @@ export const checkSettingsAndLlm: VerifyCheck = {
       return;
     }
 
+    // Verify Background Music Volume slider & Minimum Publish Spacing input persist across reload
+    await ctx.driver.evaluate(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const volEl = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Background Music Volume"]',
+      );
+      const spacingEl = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Minimum Publish Spacing Hours"]',
+      );
+      if (!volEl || !spacingEl) {
+        throw new Error('Missing Background Music Volume or Minimum Publish Spacing input');
+      }
+      setter?.call(volEl, '-15');
+      volEl.dispatchEvent(new Event('input', { bubbles: true }));
+      volEl.dispatchEvent(new Event('change', { bubbles: true }));
+      setter?.call(spacingEl, '8');
+      spacingEl.dispatchEvent(new Event('input', { bubbles: true }));
+      spacingEl.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await ctx.driver.clickByText('Save Preferences');
+    await ctx.driver.waitForText('Saved studio preferences.');
+    await ctx.driver.goto('/settings');
+    await ctx.driver.waitForText('-15 dB');
+    const persisted = await ctx.driver.evaluate(() => ({
+      vol: document.querySelector<HTMLInputElement>('input[aria-label="Background Music Volume"]')?.value,
+      spacing: document.querySelector<HTMLInputElement>('input[aria-label="Minimum Publish Spacing Hours"]')?.value,
+    }));
+    if (persisted.vol !== '-15' || persisted.spacing !== '8') {
+      throw new Error(`Expected persisted settings -15/8 after reload, got ${JSON.stringify(persisted)}`);
+    }
+    ctx.recordAssertion('Verified Background Music Volume (-15dB) and Minimum Publish Spacing (8h) persist cleanly');
+
+    // Restore clean defaults (-17dB / 6h) for downstream checks
+    await ctx.driver.evaluate(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const volEl = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Background Music Volume"]',
+      );
+      const spacingEl = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Minimum Publish Spacing Hours"]',
+      );
+      if (!volEl || !spacingEl) {
+        throw new Error('Missing Background Music Volume or Minimum Publish Spacing input');
+      }
+      setter?.call(volEl, '-17');
+      volEl.dispatchEvent(new Event('input', { bubbles: true }));
+      volEl.dispatchEvent(new Event('change', { bubbles: true }));
+      setter?.call(spacingEl, '6');
+      spacingEl.dispatchEvent(new Event('input', { bubbles: true }));
+      spacingEl.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await ctx.driver.clickByText('Save Preferences');
+    await ctx.driver.waitForText('Saved studio preferences.');
+
     // Open Add Custom Endpoint form
     await ctx.driver.clickByText('Add Custom Endpoint');
     await ctx.driver.waitForText('Connect OpenAI-Compatible Endpoint');

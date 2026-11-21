@@ -3,6 +3,8 @@ import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type LineChartScene as LineChartData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: LineChartData;
@@ -12,13 +14,25 @@ export const LineChartScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('line_chart', scene.visual?.layout);
 
   const cardSpring = spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
-  const drawProgress = interpolate(frame, [4, 28], [0, 1], {
+  const chartBeats = computeBeatFrames(durationInFrames, Math.max(2, scene.points.length), words, {
+    startFrac: 0.08,
+    endFrac: 0.74,
+  });
+  const drawEndFrame = Math.max(28, chartBeats[chartBeats.length - 1] ?? Math.round(durationInFrames * 0.72));
+  const drawProgress = interpolate(frame, [4, drawEndFrame], [0.06, 1], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
+  const haloRadius = interpolate(
+    frame,
+    [Math.max(8, drawEndFrame - 10), Math.max(24, durationInFrames - 6)],
+    [12, 22],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
 
   const width = 760;
   const height = 380;
@@ -185,7 +199,7 @@ export const LineChartScene: React.FC<Props> = ({ scene }) => {
             return (
               <g key={idx}>
                 {isHi ? (
-                  <circle cx={c.x} cy={c.y} r={16} fill={palette.accentSoft} />
+                  <circle cx={c.x} cy={c.y} r={haloRadius} fill={palette.accentSoft} />
                 ) : null}
                 <circle
                   cx={c.x}

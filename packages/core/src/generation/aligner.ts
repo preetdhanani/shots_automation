@@ -3,8 +3,14 @@ import path from 'node:path';
 import type { AppEnv } from '../config/env.js';
 import { runSubprocess } from '../media/subprocess.js';
 import type { CaptionToken, ReelCaptionsFile, SceneTiming } from '../schemas/media.js';
-import type { ReelScene, ReelStoryboard } from '../schemas/storyboard.js';
+import {
+  CHANNEL_OUTRO_ESTIMATED_GAP_MS,
+  isChannelOutroScene,
+  type ReelScene,
+  type ReelStoryboard,
+} from '../schemas/storyboard.js';
 import { SCENE_SHORT_LABELS } from '../variety/registry.js';
+import { expandPronunciationForAlignment } from './pronunciation.js';
 import { detectWhisperCliPath, getWhisperModelPath, WHISPER_MODEL_EXPECTED_BYTES } from './whisperSetup.js';
 
 export interface WhisperWordAnchor {
@@ -109,7 +115,12 @@ export function normalizeSpokenWord(raw: string): string[] {
         tokens.push(...intToSpokenWords(num));
       }
     } else {
-      tokens.push(stripped);
+      const pronunciation = expandPronunciationForAlignment(stripped);
+      if (pronunciation) {
+        tokens.push(...pronunciation);
+      } else {
+        tokens.push(stripped);
+      }
     }
   }
   return tokens;
@@ -312,6 +323,9 @@ export function alignStoryboardWithWhisperAnchors(
     }
   }
 
+  const hasChannelOutro =
+    storyboard.scenes.length >= 2 &&
+    isChannelOutroScene(storyboard.scenes[storyboard.scenes.length - 1]!);
   const effectiveUseWhisper = useWhisper && matchedBounds.size >= Math.floor(displayItems.length * 0.35);
 
   const captions: CaptionToken[] = new Array<CaptionToken>(displayItems.length);
@@ -339,11 +353,12 @@ export function alignStoryboardWithWhisperAnchors(
       }
       const gapEndIdx = cursor - 1;
       const prevEnd =
-        gapStartIdx > 0 ? captions[gapStartIdx - 1]!.endMs : Math.min(120, Math.round(audioDurationMs * 0.02));
+        gapStartIdx > 0 ? captions[gapStartIdx - 1]!.endMs : Math.min(220, Math.round(audioDurationMs * 0.02));
+      const tailReserveMs = 650;
       const nextStart =
         cursor < displayItems.length
           ? matchedBounds.get(cursor)!.startMs
-          : Math.max(prevEnd + 100, audioDurationMs - 100);
+          : Math.max(prevEnd + 100, audioDurationMs - tailReserveMs);
 
       const count = gapEndIdx - gapStartIdx + 1;
       const weights = displayItems
@@ -369,14 +384,25 @@ export function alignStoryboardWithWhisperAnchors(
     }
   } else {
     // Weighted character duration estimation fallback
-    const headPad = 120;
-    const tailPad = 140;
-    const usableMs = Math.max(1000, audioDurationMs - headPad - tailPad);
+    const headPad = 220;
+    const tailPad = 650;
+    const outroGapMs = hasChannelOutro
+      ? Math.min(
+          CHANNEL_OUTRO_ESTIMATED_GAP_MS,
+          Math.max(0, Math.round((audioDurationMs - headPad - tailPad) * 0.2)),
+        )
+      : 0;
+    const usableMs = Math.max(1000, audioDurationMs - headPad - tailPad - outroGapMs);
     const weights = displayItems.map((d) => Math.max(3, d.displayText.replace(/[^a-zA-Z0-9]/g, '').length) + 1);
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     let runningMs = headPad;
+    let outroGapApplied = false;
 
     displayItems.forEach((item, idx) => {
+      if (hasChannelOutro && !outroGapApplied && item.sceneIdx === storyboard.scenes.length - 1) {
+        runningMs += outroGapMs;
+        outroGapApplied = true;
+      }
       const share = (usableMs * weights[idx]!) / totalWeight;
       const startMs = Math.round(runningMs);
       runningMs += share;
@@ -391,9 +417,10 @@ export function alignStoryboardWithWhisperAnchors(
     });
   }
 
-  // Enforce strict monotonicity across all caption tokens
+  // Enforce strict monotonicity forward, then squeeze any overflowing tail backward inside audioDurationMs
   for (let idx = 0; idx < captions.length; idx++) {
     const cur = captions[idx]!;
+    cur.startMs = Math.max(0, cur.startMs);
     if (idx > 0) {
       const prev = captions[idx - 1]!;
       if (cur.startMs < prev.endMs) {
@@ -403,10 +430,21 @@ export function alignStoryboardWithWhisperAnchors(
     if (cur.endMs <= cur.startMs) {
       cur.endMs = cur.startMs + 40;
     }
-    if (cur.endMs > audioDurationMs) {
-      cur.endMs = Math.max(cur.startMs + 20, audioDurationMs);
-    }
     cur.timestampMs = cur.startMs;
+  }
+
+  const minWordMs = Math.max(
+    1,
+    Math.min(20, Math.floor(audioDurationMs / Math.max(1, captions.length))),
+  );
+  for (let idx = captions.length - 1; idx >= 0; idx--) {
+    const cur = captions[idx]!;
+    const maxEnd = idx === captions.length - 1 ? audioDurationMs : captions[idx + 1]!.startMs;
+    if (cur.endMs > maxEnd) {
+      cur.endMs = maxEnd;
+      cur.startMs = Math.min(cur.startMs, Math.max(0, cur.endMs - minWordMs));
+      cur.timestampMs = cur.startMs;
+    }
   }
 
   // Derive scene boundaries strictly from aligned word spans without audio drift

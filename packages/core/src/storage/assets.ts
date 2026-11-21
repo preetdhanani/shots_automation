@@ -15,6 +15,7 @@ export class LocalAssetStorage {
   readonly reelsDir: string;
   readonly voicePreviewsDir: string;
   readonly musicDir: string;
+  readonly sfxDir: string;
   readonly logsDir: string;
 
   constructor(dataDir: string) {
@@ -22,6 +23,7 @@ export class LocalAssetStorage {
     this.reelsDir = path.join(this.dataDir, 'reels');
     this.voicePreviewsDir = path.join(this.dataDir, 'voice-previews');
     this.musicDir = path.join(this.dataDir, 'music');
+    this.sfxDir = path.join(this.dataDir, 'sfx');
     this.logsDir = path.join(this.dataDir, 'logs');
   }
 
@@ -29,6 +31,7 @@ export class LocalAssetStorage {
     fs.mkdirSync(this.reelsDir, { recursive: true });
     fs.mkdirSync(this.voicePreviewsDir, { recursive: true });
     fs.mkdirSync(this.musicDir, { recursive: true });
+    fs.mkdirSync(this.sfxDir, { recursive: true });
     fs.mkdirSync(this.logsDir, { recursive: true });
   }
 

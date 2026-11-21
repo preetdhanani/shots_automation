@@ -3,6 +3,8 @@ import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type BigStatScene as BigStatData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: BigStatData;
@@ -12,14 +14,29 @@ export const BigStatScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { isFirst, durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('big_stat', scene.visual?.layout);
 
-  const numSpring = spring({ frame, fps, config: { damping: 13, stiffness: 135 } });
-  const textSpring = spring({
-    frame: Math.max(0, frame - 8),
-    fps,
-    config: { damping: 16, stiffness: 140 },
+  const numSpring = isFirst
+    ? 1
+    : spring({ frame, fps, config: { damping: 13, stiffness: 135 } });
+  const textSpring = isFirst
+    ? 1
+    : spring({
+        frame: Math.max(0, frame - 8),
+        fps,
+        config: { damping: 16, stiffness: 140 },
+      });
+  const beatFrames = computeBeatFrames(durationInFrames, 2, words, {
+    startFrac: 0.14,
+    endFrac: 0.72,
   });
+  const statProgress = interpolate(
+    frame,
+    [0, Math.max(24, beatFrames[1] ?? Math.round(durationInFrames * 0.72))],
+    [0.24, 1],
+    { extrapolateRight: 'clamp' },
+  );
 
   const trendBadge =
     scene.trend === 'up'
@@ -77,6 +94,25 @@ export const BigStatScene: React.FC<Props> = ({ scene }) => {
             }}
           >
             {scene.value}
+          </div>
+          <div
+            style={{
+              marginTop: 6,
+              width: '100%',
+              height: 5,
+              borderRadius: 999,
+              backgroundColor: 'rgba(255,255,255,0.08)',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.round(statProgress * 100)}%`,
+                height: '100%',
+                borderRadius: 999,
+                backgroundColor: palette.accent,
+              }}
+            />
           </div>
         </div>
 
@@ -158,6 +194,25 @@ export const BigStatScene: React.FC<Props> = ({ scene }) => {
         }}
       >
         {scene.value}
+      </div>
+
+      <div
+        style={{
+          width: 320,
+          height: 5,
+          borderRadius: 999,
+          backgroundColor: 'rgba(255,255,255,0.08)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.round(statProgress * 100)}%`,
+            height: '100%',
+            borderRadius: 999,
+            backgroundColor: palette.accent,
+          }}
+        />
       </div>
 
       <h2

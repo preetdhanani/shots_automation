@@ -104,62 +104,150 @@ export async function prepareNormalizedVoicePair(opts: {
   trimmedMasterPath: string;
   output48kPath: string;
   output16kPath: string;
+  headDelayMs?: number;
+  tailPadSec?: number;
   signal?: AbortSignal;
 }): Promise<{ durationMs: number }> {
+  const headDelayMs = Math.max(0, Math.round(opts.headDelayMs ?? 220));
+  const tailPadSec = Math.max(0, opts.tailPadSec ?? 0.65);
   const detected = detectGeminiAudioInput(opts.rawBytes, opts.mimeType);
   const inputArgs =
     detected.kind === 'pcm'
       ? ['-f', 's16le', '-ar', String(detected.sampleRate), '-ac', String(detected.channels), '-i', opts.rawAudioPath]
       : ['-i', opts.rawAudioPath];
 
-  // Step 1: Trim only leading & trailing silence once and add clean 120ms head/tail breathing room
+  const normalizedTempPath = `${opts.trimmedMasterPath}.norm.wav`;
+
+  try {
+    // Step 1: Two-pass loudnorm FIRST so silence-threshold detection is calibrated to -14 LUFS speech
+    const pass1 = await runSubprocess(
+      'ffmpeg',
+      [
+        '-y',
+        ...inputArgs,
+        '-af',
+        'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json',
+        '-f',
+        'null',
+        '-',
+      ],
+      { signal: opts.signal, timeoutMs: 60_000 },
+    );
+
+    const stats = parseLoudnormStats(pass1.stderr);
+    const loudnormFilter = stats
+      ? `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`
+      : 'loudnorm=I=-14:TP=-1.5:LRA=11';
+
+    await runSubprocess(
+      'ffmpeg',
+      [
+        '-y',
+        ...inputArgs,
+        '-af',
+        loudnormFilter,
+        '-ar',
+        '48000',
+        '-ac',
+        '2',
+        '-c:a',
+        'pcm_s16le',
+        normalizedTempPath,
+      ],
+      { signal: opts.signal, timeoutMs: 60_000 },
+    );
+
+    // Step 2: Trim leading/trailing silence, tighten internal pauses > 220ms down to 110ms,
+    // apply subtle 1.05x pacing, head/tail breathing room, and transparent true-peak limiting (level=false)
+    await runSubprocess(
+      'ffmpeg',
+      [
+        '-y',
+        '-i',
+        normalizedTempPath,
+        '-af',
+        `silenceremove=start_periods=1:start_duration=0.04:start_threshold=-40dB:stop_periods=-1:stop_duration=0.22:stop_threshold=-40dB:stop_silence=0.11,areverse,silenceremove=start_periods=1:start_duration=0.04:start_threshold=-40dB,areverse,atempo=1.05,adelay=${headDelayMs}|${headDelayMs},apad=pad_dur=${tailPadSec.toFixed(2)},alimiter=limit=0.84:level=false`,
+        '-ar',
+        '48000',
+        '-ac',
+        '2',
+        '-c:a',
+        'pcm_s16le',
+        opts.trimmedMasterPath,
+      ],
+      { signal: opts.signal, timeoutMs: 60_000 },
+    );
+
+    fs.copyFileSync(opts.trimmedMasterPath, opts.output48kPath);
+
+    // Step 3: Derive 16kHz mono WAV from output48kPath so timestamps match voice-48k.wav sample-for-sample
+    await runSubprocess(
+      'ffmpeg',
+      [
+        '-y',
+        '-i',
+        opts.output48kPath,
+        '-ar',
+        '16000',
+        '-ac',
+        '1',
+        '-c:a',
+        'pcm_s16le',
+        opts.output16kPath,
+      ],
+      { signal: opts.signal, timeoutMs: 60_000 },
+    );
+
+    const durationMs = await getAudioDurationMs(opts.output48kPath, opts.signal);
+    return { durationMs };
+  } finally {
+    if (fs.existsSync(normalizedTempPath)) {
+      fs.rmSync(normalizedTempPath, { force: true });
+    }
+  }
+}
+
+export async function concatVoiceSegmentsWithPause(opts: {
+  mainVoice48kPath: string;
+  outroVoice48kPath: string;
+  pauseMs: number;
+  tailPadMs?: number;
+  output48kPath: string;
+  output16kPath: string;
+  signal?: AbortSignal;
+}): Promise<{ durationMs: number }> {
+  const pauseMs = Math.max(0, Math.round(opts.pauseMs));
+  const tailPadMs = Math.max(0, Math.round(opts.tailPadMs ?? 0));
+  const filterParts: string[] = [
+    '[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a0]',
+    '[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a1]',
+  ];
+
+  let concatInput: string;
+  if (pauseMs > 0) {
+    filterParts.push(
+      `anullsrc=r=48000:cl=stereo,aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=0:${(pauseMs / 1000).toFixed(3)},asetpts=PTS-STARTPTS[gap]`,
+    );
+    concatInput = '[a0][gap][a1]concat=n=3:v=0:a=1';
+  } else {
+    concatInput = '[a0][a1]concat=n=2:v=0:a=1';
+  }
+
+  const tailFilter = tailPadMs > 0 ? `,apad=pad_dur=${(tailPadMs / 1000).toFixed(3)}` : '';
+  filterParts.push(`${concatInput}${tailFilter}[aout]`);
+
   await runSubprocess(
     'ffmpeg',
     [
       '-y',
-      ...inputArgs,
-      '-af',
-      'silenceremove=start_periods=1:start_duration=0.04:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_duration=0.04:start_threshold=-45dB,areverse,adelay=120|120,apad=pad_dur=0.12',
-      '-ar',
-      '48000',
-      '-ac',
-      '2',
-      '-c:a',
-      'pcm_s16le',
-      opts.trimmedMasterPath,
-    ],
-    { signal: opts.signal, timeoutMs: 60_000 },
-  );
-
-  // Step 2: Two-pass loudnorm into 48kHz stereo WAV for delivery video mix
-  const pass1 = await runSubprocess(
-    'ffmpeg',
-    [
-      '-y',
       '-i',
-      opts.trimmedMasterPath,
-      '-af',
-      'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json',
-      '-f',
-      'null',
-      '-',
-    ],
-    { signal: opts.signal, timeoutMs: 60_000 },
-  );
-
-  const stats = parseLoudnormStats(pass1.stderr);
-  const loudnormFilter = stats
-    ? `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`
-    : 'loudnorm=I=-14:TP=-1.5:LRA=11';
-
-  await runSubprocess(
-    'ffmpeg',
-    [
-      '-y',
+      opts.mainVoice48kPath,
       '-i',
-      opts.trimmedMasterPath,
-      '-af',
-      loudnormFilter,
+      opts.outroVoice48kPath,
+      '-filter_complex',
+      filterParts.join(';'),
+      '-map',
+      '[aout]',
       '-ar',
       '48000',
       '-ac',
@@ -171,13 +259,13 @@ export async function prepareNormalizedVoicePair(opts: {
     { signal: opts.signal, timeoutMs: 60_000 },
   );
 
-  // Step 3: Derive 16kHz mono WAV from the identical trimmed master so timestamps match voice-48k.wav
+  // Derive 16kHz mono WAV from output48kPath so timestamps match sample-for-sample
   await runSubprocess(
     'ffmpeg',
     [
       '-y',
       '-i',
-      opts.trimmedMasterPath,
+      opts.output48kPath,
       '-ar',
       '16000',
       '-ac',
@@ -222,13 +310,13 @@ export function buildDeliveryFfmpegArgs(opts: DeliveryEncodeOptions): string[] {
     mixLabels.push('[voice_mix]');
 
     args.push('-stream_loop', '-1', '-i', opts.musicPath);
-    const volDb = opts.musicVolumeDb ?? -22;
-    const fadeStart = Math.max(0.2, opts.durationSec - 0.8).toFixed(2);
+    const volDb = opts.musicVolumeDb ?? -17;
+    const fadeStart = Math.max(0.2, opts.durationSec - 0.55).toFixed(2);
     filterParts.push(
-      `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${volDb}dB,atrim=0:${opts.durationSec.toFixed(3)},afade=t=in:st=0:d=0.35,afade=t=out:st=${fadeStart}:d=0.75[bgm_raw]`,
+      `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${volDb}dB,atrim=0:${opts.durationSec.toFixed(3)},afade=t=in:st=0:d=0.28,afade=t=out:st=${fadeStart}:d=0.50[bgm_raw]`,
     );
     filterParts.push(
-      '[bgm_raw][voice_sc]sidechaincompress=threshold=0.02:ratio=4:attack=20:release=250:makeup=1[bgm]',
+      '[bgm_raw][voice_sc]sidechaincompress=threshold=0.02:ratio=3.5:attack=15:release=220:makeup=1[bgm]',
     );
     mixLabels.push('[bgm]');
     nextInputIdx++;
@@ -251,7 +339,7 @@ export function buildDeliveryFfmpegArgs(opts: DeliveryEncodeOptions): string[] {
 
   const maxOffsetMs = opts.durationSec * 1000 - 120;
   for (const cue of resolvedCues) {
-    if (cue.offsetMs <= 100 || cue.offsetMs >= maxOffsetMs) continue;
+    if (cue.offsetMs < 0 || cue.offsetMs >= maxOffsetMs) continue;
     if (!fs.existsSync(cue.path)) continue;
     args.push('-i', cue.path);
     const label = `sfx_${nextInputIdx}`;
@@ -264,11 +352,14 @@ export function buildDeliveryFfmpegArgs(opts: DeliveryEncodeOptions): string[] {
     nextInputIdx++;
   }
 
+  const masterFadeOutStart = Math.max(0.05, opts.durationSec - 0.06).toFixed(3);
   if (mixLabels.length === 1) {
-    filterParts.push(`${mixLabels[0]}anull[aout]`);
+    filterParts.push(
+      `${mixLabels[0]}afade=t=in:st=0:d=0.02,afade=t=out:st=${masterFadeOutStart}:d=0.06[aout]`,
+    );
   } else {
     filterParts.push(
-      `${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:normalize=0,alimiter=limit=0.95[aout]`,
+      `${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:normalize=0,alimiter=limit=0.95:level=false,afade=t=in:st=0:d=0.02,afade=t=out:st=${masterFadeOutStart}:d=0.06[aout]`,
     );
   }
 
@@ -336,7 +427,7 @@ export async function encodeDeliveryReel(opts: DeliveryEncodeOptions): Promise<v
 export async function extractCoverFrame(
   videoPath: string,
   coverJpgPath: string,
-  offsetSec = 0.8,
+  offsetSec = 0,
   signal?: AbortSignal,
 ): Promise<void> {
   const tmpOut = `${coverJpgPath}.tmp.jpg`;

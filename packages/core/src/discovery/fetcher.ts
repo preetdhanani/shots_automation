@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { XMLParser } from 'fast-xml-parser';
 import type { AppEnv } from '../config/env.js';
-import type { CreateTopicInput, Store } from '../db/store.js';
+import type { CreateTopicInput, Store, TopicRecord } from '../db/store.js';
 import type { ContentPillar } from '../schemas/storyboard.js';
 import {
   classifyPillar,
@@ -53,8 +53,192 @@ function stripHtmlTags(raw: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+const FACT_SIGNAL_RE =
+  /\b(\d+(?:\.\d+)?%|[$€£]\d+|\d+(?:\.\d+)?x\b|score|index|bench|arena|tokens?|latency|\d+\s*ms\b|vs\.?\b|outperform|cost|price|million|billion)/i;
+
+function stripNonContentHtmlBlocks(raw: string): string {
+  return raw
+    .replace(
+      /<(script|style|nav|footer|aside|svg|form|dialog|button|noscript)\b[\s\S]*?<\/\1>/gi,
+      ' ',
+    )
+    .replace(/<!--[\s\S]*?-->/g, ' ');
+}
+
+function htmlBlockToCleanLines(raw: string): string[] {
+  const withNewlines = raw
+    .replace(/<\/(p|li|tr|h[1-6]|div|blockquote|section|td|th)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const rawLine of withNewlines.split('\n')) {
+    const clean = rawLine.replace(/\s+/g, ' ').trim();
+    if (clean.length < 18) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(clean);
+  }
+  return lines;
+}
+
+export function extractArticleFactsFromHtml(
+  htmlOrText: string,
+  fallbackUrl: string,
+  maxChars = 2600,
+): { title: string; excerpt: string } {
+  const titleMatch = htmlOrText.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const ogTitleMatch = htmlOrText.match(
+    /<meta[^>]+(?:property|name)=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+  );
+  const rawTitle = stripHtmlTags(ogTitleMatch?.[1] || titleMatch?.[1] || '');
+  const title = rawTitle || (() => {
+    try {
+      return new URL(fallbackUrl).hostname;
+    } catch {
+      return 'Article';
+    }
+  })();
+
+  const strippedChrome = stripNonContentHtmlBlocks(htmlOrText);
+
+  // Extract <article> (picking longest if multiple) or <main> BEFORE stripping <header>
+  let primaryHtml = '';
+  const articleMatches = Array.from(strippedChrome.matchAll(/<article\b[\s\S]*?<\/article>/gi));
+  if (articleMatches.length > 0) {
+    let bestText = '';
+    for (const m of articleMatches) {
+      const candidateText = stripHtmlTags(m[0]);
+      if (candidateText.length > bestText.length) {
+        bestText = candidateText;
+        primaryHtml = m[0];
+      }
+    }
+    if (bestText.length < 300) {
+      primaryHtml = '';
+    }
+  }
+
+  if (!primaryHtml) {
+    const mainMatch = strippedChrome.match(/<main\b[\s\S]*?<\/main>/i);
+    if (mainMatch && stripHtmlTags(mainMatch[0]).length >= 300) {
+      primaryHtml = mainMatch[0];
+    }
+  }
+
+  if (!primaryHtml) {
+    primaryHtml = strippedChrome.replace(/<header\b[\s\S]*?<\/header>/gi, ' ');
+  }
+
+  const lines = htmlBlockToCleanLines(primaryHtml);
+  if (lines.length === 0) {
+    return {
+      title,
+      excerpt: stripHtmlTags(primaryHtml).slice(0, maxChars),
+    };
+  }
+
+  const selected: string[] = [];
+  const usedIndices = new Set<number>();
+  let totalLen = 0;
+
+  const pushLine = (idx: number): boolean => {
+    if (usedIndices.has(idx)) return true;
+    const line = lines[idx]!;
+    const sep = selected.length > 0 ? 1 : 0;
+    if (totalLen + sep + line.length > maxChars) return false;
+    usedIndices.add(idx);
+    selected.push(line);
+    totalLen += sep + line.length;
+    return true;
+  };
+
+  // Keep opening context (~900 chars) first so the model knows what the article is about
+  for (let i = 0; i < lines.length && totalLen < Math.min(900, Math.floor(maxChars * 0.4)); i++) {
+    if (!pushLine(i)) break;
+  }
+
+  // Prioritize high-signal benchmark/pricing/comparison lines for the remaining budget
+  for (let i = 0; i < lines.length; i++) {
+    if (usedIndices.has(i)) continue;
+    if (FACT_SIGNAL_RE.test(lines[i]!)) {
+      if (!pushLine(i)) break;
+    }
+  }
+
+  // Fill any remaining budget sequentially
+  for (let i = 0; i < lines.length; i++) {
+    if (usedIndices.has(i)) continue;
+    if (!pushLine(i)) break;
+  }
+
+  return {
+    title,
+    excerpt: selected.join('\n').slice(0, maxChars),
+  };
+}
+
+export async function enrichTopicForScripting<
+  T extends Pick<TopicRecord, 'title' | 'summary' | 'sourceName' | 'sourceUrl' | 'pillar'>,
+>(topic: T, fetchOpts: SafeFetchOptions = {}): Promise<T> {
+  if (topic.summary.length >= 900) {
+    return topic;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(topic.sourceUrl);
+  } catch {
+    return topic;
+  }
+
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    return topic;
+  }
+
+  const host = parsedUrl.hostname.toLowerCase();
+  if (
+    host === 'custom.local' ||
+    host === 'example.com' ||
+    host.endsWith('.example.com') ||
+    (host === 'news.ycombinator.com' && parsedUrl.pathname === '/item')
+  ) {
+    return topic;
+  }
+
+  try {
+    const res = await safeFetchText(topic.sourceUrl, {
+      timeoutMs: 6500,
+      ...fetchOpts,
+    });
+    const extracted = extractArticleFactsFromHtml(res.text, res.url, 2600);
+    if (extracted.excerpt.length <= 160) {
+      return topic;
+    }
+    const enrichedSummary = `${topic.summary.trim()}\n\nArticle Facts & Benchmarks:\n${extracted.excerpt}`.slice(
+      0,
+      3200,
+    );
+    return {
+      ...topic,
+      summary: enrichedSummary,
+    };
+  } catch {
+    return topic;
+  }
 }
 
 function asArray<T>(val: T | T[] | undefined | null): T[] {
@@ -108,7 +292,7 @@ export function parseFeedXml(xmlText: string, source: RssFeedSource): RawDiscove
       const link = textValue(item.link).trim();
       if (!title || !link) continue;
       const rawDesc = textValue(item.description) || textValue(item['content:encoded']);
-      const summary = stripHtmlTags(rawDesc).slice(0, 420) || title;
+      const summary = stripHtmlTags(rawDesc).slice(0, 2000) || title;
       const pub = textValue(item.pubDate) || textValue(item['dc:date']) || new Date().toISOString();
       out.push({
         title,
@@ -130,7 +314,7 @@ export function parseFeedXml(xmlText: string, source: RssFeedSource): RawDiscove
       const link = extractAtomLink(entry.link);
       if (!title || !link) continue;
       const rawSummary = textValue(entry.summary) || textValue(entry.content);
-      const summary = stripHtmlTags(rawSummary).slice(0, 420) || title;
+      const summary = stripHtmlTags(rawSummary).slice(0, 2000) || title;
       const pub =
         textValue(entry.published) || textValue(entry.updated) || new Date().toISOString();
       out.push({
@@ -175,7 +359,7 @@ export function parseHackerNewsHits(jsonText: string): RawDiscoveredItem[] {
     out.push({
       title,
       summary:
-        stripHtmlTags(hit.story_text ?? '').slice(0, 420) ||
+        stripHtmlTags(hit.story_text ?? '').slice(0, 2000) ||
         `Trending on Hacker News (${hit.points ?? 0} points): ${title}`,
       sourceName: 'Hacker News',
       sourceUrl: url,
@@ -207,7 +391,7 @@ export function parseGithubReleases(jsonText: string, src: GithubRepoSource): Ra
     const label = rel.name?.trim() || rel.tag_name;
     const title = `${src.name.replace(/ Releases$/, '')} ${label}`;
     const summary =
-      stripHtmlTags((rel.body ?? '').replace(/[#*`]/g, ' ')).slice(0, 420) ||
+      stripHtmlTags((rel.body ?? '').replace(/[#*`]/g, ' ')).slice(0, 2000) ||
       `New release ${rel.tag_name} for ${src.owner}/${src.repo}`;
     out.push({
       title,
@@ -252,7 +436,7 @@ async function fetchGeminiGroundedTopics(env: AppEnv): Promise<RawDiscoveredItem
     .filter((i) => i.title && i.summary && i.url && i.url.startsWith('http'))
     .map((i) => ({
       title: i.title!.trim(),
-      summary: i.summary!.trim().slice(0, 420),
+      summary: i.summary!.trim().slice(0, 2000),
       sourceName: 'Gemini Search Grounding',
       sourceUrl: i.url!.trim(),
       publishedAt: new Date().toISOString(),

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { CONTENT_PILLARS, PILLAR_LABELS, type ContentPillar } from '@post/core/shared';
-import { ExternalLink, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { BrushCleaning, ExternalLink, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import type { TopicDto } from '../api.js';
 import { PillarBadge } from '../components/PillarBadge.js';
 
@@ -12,6 +12,7 @@ interface Props {
   scriptLlmReady: boolean;
   ttsReady: boolean;
   onFetchLatest: () => void;
+  onOpenCleanModal: () => void;
   onOpenCustomModal: () => void;
   onGenerateFromTopic: (topic: TopicDto) => void;
   onDismissTopic: (topic: TopicDto) => void;
@@ -47,6 +48,7 @@ export const DiscoverView: React.FC<Props> = ({
   scriptLlmReady,
   ttsReady,
   onFetchLatest,
+  onOpenCleanModal,
   onOpenCustomModal,
   onGenerateFromTopic,
   onDismissTopic,
@@ -73,6 +75,15 @@ export const DiscoverView: React.FC<Props> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={onOpenCleanModal}
+            disabled={loading || fetching || topics.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/12 bg-[#141720] px-3.5 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <BrushCleaning className="h-3.5 w-3.5 text-amber-300" />
+            Clean Feed
+          </button>
           <button
             type="button"
             onClick={onOpenCustomModal}

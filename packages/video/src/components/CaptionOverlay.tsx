@@ -1,12 +1,13 @@
 import React, { useMemo } from 'react';
-import { createTikTokStyleCaptions, type Caption } from '@remotion/captions';
-import { useCurrentFrame, useVideoConfig } from 'remotion';
-import type { CaptionToken, ContentPillar } from '@post/core';
+import { interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
+import type { CaptionToken, ContentPillar, SceneTiming } from '@post/core';
 import { useReelStyle } from '../style/ReelStyleContext.js';
-import { SAFE_ZONE } from '../theme.js';
+import { CAPTION_FONT_FAMILY, SAFE_ZONE } from '../theme.js';
+import { buildCaptionPages, findActiveCaptionPage } from './captionPaging.js';
 
 interface CaptionOverlayProps {
   captions: CaptionToken[];
+  sceneTimings?: readonly SceneTiming[];
   pillar: ContentPillar;
   emphasisWords?: readonly string[];
 }
@@ -15,11 +16,15 @@ function cleanWord(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9+$%]/g, '');
 }
 
-export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphasisWords }) => {
+export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({
+  captions,
+  sceneTimings,
+  emphasisWords,
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const timeInMs = (frame / fps) * 1000;
-  const { style, palette, fonts } = useReelStyle();
+  const { style, palette } = useReelStyle();
 
   const emphasisSet = useMemo(
     () =>
@@ -32,27 +37,47 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
     [emphasisWords],
   );
 
-  const pages = useMemo(() => {
-    const normalized: Caption[] = captions.map((c) => ({
-      text: c.text,
-      startMs: c.startMs,
-      endMs: c.endMs,
-      timestampMs: c.timestampMs ?? c.startMs,
-      confidence: c.confidence ?? null,
-    }));
-    return createTikTokStyleCaptions({
-      captions: normalized,
-      combineTokensWithinMilliseconds: 950,
-    }).pages;
-  }, [captions]);
-
-  const currentPage = pages.find(
-    (page) => timeInMs >= page.startMs && timeInMs <= page.startMs + page.durationMs + 120,
+  const sceneBoundariesMs = useMemo(
+    () => (sceneTimings ?? []).slice(1).map((t) => t.startMs),
+    [sceneTimings],
   );
+
+  const pages = useMemo(
+    () =>
+      buildCaptionPages(captions, {
+        combineTokensWithinMilliseconds: 700,
+        maxWordsPerPage: 4,
+        sceneBoundariesMs,
+      }),
+    [captions, sceneBoundariesMs],
+  );
+
+  // Keep Frame 0-2 (cover frame) completely caption-free for clean IG Reels grid thumbnails
+  if (frame < 3 || timeInMs < 100) {
+    return null;
+  }
+
+  const currentPage = findActiveCaptionPage(pages, timeInMs);
 
   if (!currentPage || currentPage.tokens.length === 0) {
     return null;
   }
+
+  const firstStartMs = Math.max(100, pages[0]?.startMs ?? 100);
+  const fadeInOpacity = interpolate(timeInMs, [firstStartMs, firstStartMs + 100], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const lastPage = pages[pages.length - 1]!;
+  const lastTokenEndMs = lastPage.tokens[lastPage.tokens.length - 1]!.toMs;
+  const tailFadeOpacity =
+    currentPage === lastPage && timeInMs >= lastTokenEndMs
+      ? interpolate(timeInMs, [lastTokenEndMs, lastTokenEndMs + 180], [1, 0], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        })
+      : 1;
+  const overlayOpacity = Math.min(fadeInOpacity, tailFadeOpacity);
 
   const captionStyle = style.captionStyle;
 
@@ -67,6 +92,7 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        opacity: overlayOpacity,
         pointerEvents: 'none',
         zIndex: 10,
       }}
@@ -76,7 +102,7 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
           style={{
             textAlign: 'center',
             maxWidth: '100%',
-            fontFamily: fonts.display,
+            fontFamily: CAPTION_FONT_FAMILY,
             fontSize: 48,
             fontWeight: 800,
             lineHeight: 1.15,
@@ -85,7 +111,7 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
             display: 'flex',
             flexWrap: 'wrap',
             justifyContent: 'center',
-            gap: '6px 22px',
+            gap: '8px 28px',
           }}
         >
           {currentPage.tokens.map((token, idx) => {
@@ -96,9 +122,10 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
                 key={`${token.fromMs}-${idx}`}
                 style={{
                   color: isActive ? palette.accent : isKey ? palette.secondary : '#FFFFFF',
-                  transform: isActive ? 'scale(1.14) translateY(-3px)' : 'scale(1)',
+                  transform: isActive ? 'scale(1.07) translateY(-3px)' : 'scale(1)',
                   display: 'inline-block',
-                  WebkitTextStroke: '2px rgba(5, 5, 8, 0.92)',
+                  WebkitTextStroke: '4px rgba(5, 5, 8, 0.94)',
+                  paintOrder: 'stroke fill',
                   textShadow: isActive
                     ? `0 6px 20px rgba(0,0,0,0.95), 0 0 24px ${palette.glow}`
                     : '0 5px 14px rgba(0,0,0,0.95)',
@@ -119,14 +146,14 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
         >
           <div
             style={{
-              fontFamily: fonts.display,
+              fontFamily: CAPTION_FONT_FAMILY,
               fontSize: 44,
               fontWeight: 700,
               lineHeight: 1.25,
               display: 'flex',
               flexWrap: 'wrap',
               justifyContent: 'center',
-              gap: '4px 14px',
+              gap: '6px 18px',
             }}
           >
             {currentPage.tokens.map((token, idx) => {
@@ -139,6 +166,8 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
                     position: 'relative',
                     display: 'inline-block',
                     color: isActive ? '#FFFFFF' : wasSpoken ? '#F4F4F5' : '#A1A1AA',
+                    WebkitTextStroke: '2px rgba(5, 5, 8, 0.85)',
+                    paintOrder: 'stroke fill',
                     paddingBottom: 7,
                     borderBottom: isActive
                       ? `6px solid ${palette.accent}`
@@ -168,7 +197,7 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
         >
           <div
             style={{
-              fontFamily: fonts.display,
+              fontFamily: CAPTION_FONT_FAMILY,
               fontSize: 38,
               fontWeight: 700,
               lineHeight: 1.28,
@@ -176,7 +205,7 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
               flexWrap: 'wrap',
               justifyContent: 'center',
               alignItems: 'center',
-              gap: '6px 8px',
+              gap: '6px 12px',
             }}
           >
             {currentPage.tokens.map((token, idx) => {
@@ -215,15 +244,15 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
         >
           <div
             style={{
-              fontFamily: fonts.display,
+              fontFamily: CAPTION_FONT_FAMILY,
               fontSize: 40,
               fontWeight: 700,
               lineHeight: 1.25,
-              letterSpacing: '-0.01em',
+              letterSpacing: '0em',
               display: 'flex',
               flexWrap: 'wrap',
               justifyContent: 'center',
-              gap: '4px 10px',
+              gap: '6px 20px',
             }}
           >
             {currentPage.tokens.map((token, idx) => {
@@ -241,7 +270,7 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({ captions, emphas
                         : wasSpoken
                           ? '#FFFFFF'
                           : '#D4D4D8',
-                    transform: isActive ? 'scale(1.06)' : 'scale(1)',
+                    transform: isActive ? 'scale(1.05)' : 'scale(1)',
                     display: 'inline-block',
                     textShadow: isActive
                       ? `0 0 18px ${palette.glow}`

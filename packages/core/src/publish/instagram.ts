@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import type { AppEnv } from '../config/env.js';
 import type { ReelRecord, Store } from '../db/store.js';
+import { getDefaultAppSettingsFromEnv } from '../generation/llmRegistry.js';
 import { probeVideo } from '../media/ffmpeg.js';
 import type { VideoSpecReport } from '../schemas/media.js';
 import { assembleInstagramCaption } from '../schemas/storyboard.js';
@@ -12,6 +13,13 @@ import type {
   PublishResult,
   SocialPublisher,
 } from './publisher.js';
+import {
+  checkPublishSpacing,
+  DEFAULT_MIN_PUBLISH_SPACING_HOURS,
+  type PublishSpacingStatus,
+} from './spacing.js';
+
+export { checkPublishSpacing, DEFAULT_MIN_PUBLISH_SPACING_HOURS, type PublishSpacingStatus };
 
 interface MetaApiErrorPayload {
   message?: string;
@@ -76,6 +84,7 @@ export class InstagramGraphPublisher implements SocialPublisher {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly maxPollAttempts: number;
+  private readonly minPublishSpacingHours?: number;
 
   constructor(opts: {
     store: Store;
@@ -84,6 +93,7 @@ export class InstagramGraphPublisher implements SocialPublisher {
     fetchImpl?: typeof fetch;
     pollIntervalMs?: number;
     maxPollAttempts?: number;
+    minPublishSpacingHours?: number;
   }) {
     this.store = opts.store;
     this.storage = opts.storage;
@@ -91,6 +101,14 @@ export class InstagramGraphPublisher implements SocialPublisher {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.pollIntervalMs = opts.pollIntervalMs ?? 4000;
     this.maxPollAttempts = opts.maxPollAttempts ?? 45;
+    this.minPublishSpacingHours = opts.minPublishSpacingHours;
+  }
+
+  getPublishSpacingStatus(nowMs = Date.now()): PublishSpacingStatus {
+    const settings = this.store.getSettings(getDefaultAppSettingsFromEnv(this.env));
+    const minHours = this.minPublishSpacingHours ?? settings.minPublishSpacingHours;
+    const latestPublished = this.store.getLatestPublishedReel();
+    return checkPublishSpacing(latestPublished?.publishedAt ?? null, minHours, nowMs);
   }
 
   async checkHealth(): Promise<MetaHealthStatus> {
@@ -121,14 +139,23 @@ export class InstagramGraphPublisher implements SocialPublisher {
 
   async publish(
     reel: ReelRecord,
-    opts: { dryRun?: boolean; onProgress?: PublishProgressFn; signal?: AbortSignal } = {},
+    opts: {
+      dryRun?: boolean;
+      bypassSpacing?: boolean;
+      onProgress?: PublishProgressFn;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<PublishResult> {
     const { videoPath, specReport, caption } = await this.verifyLocalPreconditions(reel);
+    const spacing = this.getPublishSpacingStatus();
 
     if (opts.dryRun) {
       const warnings: string[] = [];
       if (reel.isSample) {
         warnings.push('This is an offline sample demo Reel (live Instagram posting is disabled).');
+      }
+      if (!spacing.allowed && spacing.message) {
+        warnings.push(spacing.message);
       }
       const health = await this.checkHealth();
       if (!health.configured) {
@@ -157,6 +184,13 @@ export class InstagramGraphPublisher implements SocialPublisher {
       throw new MetaPublishError(
         'Sample demo Reels cannot be published to live Instagram. Generate a real Reel from Discover or a custom prompt.',
         { safeToResetToReview: true },
+      );
+    }
+
+    if (!opts.bypassSpacing && !spacing.allowed) {
+      throw new MetaPublishError(
+        spacing.message ?? 'Publish spacing guardrail blocked rapid back-to-back publishing.',
+        { code: 429, safeToResetToReview: true },
       );
     }
 
@@ -352,7 +386,7 @@ export class InstagramGraphPublisher implements SocialPublisher {
       media_type: 'REELS',
       caption: opts.caption,
       share_to_feed: 'true',
-      thumb_offset: '800',
+      thumb_offset: '0',
     });
 
     const res = await this.fetchImpl(

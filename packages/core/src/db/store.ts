@@ -14,6 +14,12 @@ import {
   validateApiKeyValue,
 } from '../schemas/llm.js';
 import { computeNarrationHash, computeStoryboardVisualHash } from '../schemas/hashes.js';
+import {
+  isTopicOlderThanCutoff,
+  summarizeFeedCleanByInterval,
+  type FeedCleanInterval,
+  type FeedCleanIntervalCounts,
+} from '../discovery/cleaner.js';
 
 export type TopicStatus = 'NEW' | 'USED' | 'DISMISSED';
 export type ReelStatus =
@@ -113,6 +119,7 @@ export interface AppSettings {
   activeLlmEndpointId: string | null;
   aiBrollEnabled: boolean;
   voiceRotation: boolean;
+  minPublishSpacingHours: number;
 }
 
 export interface LlmEndpointRecord {
@@ -144,6 +151,17 @@ export interface UpdateLlmEndpointInput {
 export interface ReelStaleness {
   visualsDirty: boolean;
   audioDirty: boolean;
+}
+
+export interface FeedCleanPreview {
+  totalNew: number;
+  intervals: Record<FeedCleanInterval, FeedCleanIntervalCounts>;
+}
+
+export interface CleanTopicsResult {
+  removedCount: number;
+  keptCount: number;
+  removedIds: string[];
 }
 
 export interface CreateTopicInput {
@@ -214,11 +232,16 @@ export interface Store {
   };
   createTopic(input: CreateTopicInput): TopicRecord;
   updateTopicStatus(id: string, status: TopicStatus): TopicRecord | null;
+  updateTopicSummary(id: string, summary: string): TopicRecord | null;
+  previewTopicsClean(nowMs?: number): FeedCleanPreview;
+  cleanTopicsOlderThan(cutoffMs: number): CleanTopicsResult;
+  restoreTopics(ids: string[]): number;
   countTopicsSinceByPillar(sinceIso: string): Record<ContentPillar, number>;
   countReelsByPillarSince(sinceIso: string): Record<ContentPillar, number>;
 
   listReels(opts?: { statuses?: ReelStatus[]; limit?: number }): ReelRecord[];
   listRecentReelsForVariety(limit?: number): ReelRecord[];
+  getLatestPublishedReel(): ReelRecord | null;
   getReel(id: string): ReelRecord | null;
   createReel(input: CreateReelInput): ReelRecord;
   updateReel(id: string, input: UpdateReelInput): ReelRecord | null;
@@ -483,6 +506,18 @@ export class SqliteStore implements Store {
           .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
           .run(2, nowIso());
       }
+
+      if (row.v < 3) {
+        this.db
+          .prepare(
+            "UPDATE settings SET value_json = '-17', updated_at = ? WHERE key = 'musicVolumeDb' AND value_json IN ('-22', '\"-22\"')",
+          )
+          .run(nowIso());
+
+        this.db
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(3, nowIso());
+      }
     });
   }
 
@@ -695,6 +730,89 @@ export class SqliteStore implements Store {
     });
   }
 
+  updateTopicSummary(id: string, summary: string): TopicRecord | null {
+    return this.withImmediateTx(() => {
+      const info = this.db.prepare('UPDATE topics SET summary = ? WHERE id = ?').run(summary, id);
+      if (info.changes === 0) return null;
+      return this.getTopic(id);
+    });
+  }
+
+  previewTopicsClean(nowMs = Date.now()): FeedCleanPreview {
+    const rows = this.db
+      .prepare("SELECT published_at, created_at FROM topics WHERE status = 'NEW'")
+      .all() as Array<{ published_at: unknown; created_at: unknown }>;
+    const mapped = rows.map((r) => ({
+      publishedAt: String(r.published_at),
+      createdAt: String(r.created_at),
+    }));
+    return {
+      totalNew: rows.length,
+      intervals: summarizeFeedCleanByInterval(mapped, nowMs),
+    };
+  }
+
+  cleanTopicsOlderThan(cutoffMs: number): CleanTopicsResult {
+    if (!Number.isFinite(cutoffMs)) {
+      throw new RangeError('cutoffMs must be a finite timestamp');
+    }
+    return this.withImmediateTx(() => {
+      const rows = this.db
+        .prepare("SELECT id, published_at, created_at FROM topics WHERE status = 'NEW'")
+        .all() as Array<{ id: unknown; published_at: unknown; created_at: unknown }>;
+
+      const removedIds: string[] = [];
+      let keptCount = 0;
+
+      // Evaluate timestamps in JS because stored ISO strings mix `Z` and `.000Z` formats
+      for (const row of rows) {
+        const isOlder = isTopicOlderThanCutoff(
+          {
+            publishedAt: String(row.published_at),
+            createdAt: String(row.created_at),
+          },
+          cutoffMs,
+        );
+        if (isOlder) {
+          removedIds.push(String(row.id));
+        } else {
+          keptCount++;
+        }
+      }
+
+      if (removedIds.length > 0) {
+        const updateStmt = this.db.prepare(
+          "UPDATE topics SET status = 'DISMISSED' WHERE id = ? AND status = 'NEW'",
+        );
+        for (const id of removedIds) {
+          updateStmt.run(id);
+        }
+      }
+
+      return {
+        removedCount: removedIds.length,
+        keptCount,
+        removedIds,
+      };
+    });
+  }
+
+  restoreTopics(ids: string[]): number {
+    if (ids.length === 0) return 0;
+    return this.withImmediateTx(() => {
+      const uniqueIds = Array.from(new Set(ids));
+      const stmt = this.db.prepare(
+        "UPDATE topics SET status = 'NEW' WHERE id = ? AND status = 'DISMISSED'",
+      );
+      let restored = 0;
+      for (const id of uniqueIds) {
+        const info = stmt.run(id);
+        restored += Number(info.changes);
+      }
+      return restored;
+    });
+  }
+
   countTopicsSinceByPillar(sinceIso: string): Record<ContentPillar, number> {
     const counts: Record<ContentPillar, number> = {
       ai_news: 0,
@@ -756,6 +874,18 @@ export class SqliteStore implements Store {
       )
       .all(limit) as Record<string, unknown>[];
     return rows.map((r) => this.mapReelRow(r));
+  }
+
+  getLatestPublishedReel(): ReelRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM reels
+         WHERE status = 'PUBLISHED' AND is_sample = 0 AND published_at IS NOT NULL
+         ORDER BY published_at DESC, rowid DESC
+         LIMIT 1`,
+      )
+      .get() as Record<string, unknown> | undefined;
+    return row ? this.mapReelRow(row) : null;
   }
 
   getReel(id: string): ReelRecord | null {
@@ -1105,6 +1235,10 @@ export class SqliteStore implements Store {
         typeof map.get('voiceRotation') === 'boolean'
           ? (map.get('voiceRotation') as boolean)
           : defaults.voiceRotation,
+      minPublishSpacingHours:
+        typeof map.get('minPublishSpacingHours') === 'number'
+          ? (map.get('minPublishSpacingHours') as number)
+          : defaults.minPublishSpacingHours,
     };
   }
 

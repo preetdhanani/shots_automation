@@ -8,14 +8,26 @@ export interface GeminiHealthResult {
   message: string;
 }
 
-function getStatusCode(err: unknown): number | null {
-  if (!err || typeof err !== 'object') return null;
+function isRetryableGeminiError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
   const rec = err as Record<string, unknown>;
-  if (typeof rec.status === 'number') return rec.status;
-  if (typeof rec.code === 'number') return rec.code;
-  const msg = String(rec.message ?? '');
-  const m = msg.match(/\b(429|500|502|503|504)\b/);
-  return m ? Number.parseInt(m[1]!, 10) : null;
+  const numericStatus =
+    typeof rec.status === 'number' ? rec.status : typeof rec.code === 'number' ? rec.code : null;
+  if (
+    numericStatus === 429 ||
+    numericStatus === 500 ||
+    numericStatus === 502 ||
+    numericStatus === 503 ||
+    numericStatus === 504
+  ) {
+    return true;
+  }
+
+  const combined = `${String(rec.status ?? '')} ${String(rec.message ?? '')}`;
+  if (/\b(429|500|502|503|504)\b/.test(combined)) {
+    return true;
+  }
+  return /\b(UNAVAILABLE|RESOURCE_EXHAUSTED|INTERNAL)\b/i.test(combined);
 }
 
 export function createGeminiAbortSignal(
@@ -65,8 +77,7 @@ export async function withGeminiRetry<T>(
       if (opts.signal?.aborted) {
         throw new Error('Cancelled', { cause: err });
       }
-      const status = getStatusCode(err);
-      const retryable = status === 429 || status === 502 || status === 503 || status === 504;
+      const retryable = isRetryableGeminiError(err);
       if (!retryable || attempt === maxAttempts) {
         throw err;
       }

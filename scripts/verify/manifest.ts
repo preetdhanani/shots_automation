@@ -27,10 +27,10 @@ export const VERIFICATION_MANIFEST: readonly VerificationFeatureEntry[] = [
   {
     checkId: '02-discover-and-modals',
     checkFile: '02-discover-and-modals.ts',
-    title: 'Discover Feed, Topic Generate Modal & Custom Reel Modal',
+    title: 'Discover Feed, Feed Cleaner, Topic Generate Modal & Custom Reel Modal',
     routes: ['/discover'],
     views: ['DiscoverView.tsx'],
-    components: ['CustomReelModal.tsx'],
+    components: ['CustomReelModal.tsx', 'CleanFeedModal.tsx'],
   },
   {
     checkId: '03-settings-and-llm',

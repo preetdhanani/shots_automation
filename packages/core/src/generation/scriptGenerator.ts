@@ -44,7 +44,7 @@ export interface GenerateStoryboardInput {
 
 const OPEN_AI_SCENE_SHAPES: Record<SceneType, string> = {
   hook_title:
-    '"hook_title" -> "hookTitle": { "badge": string, "headline": string (4-8 words), "subheadline": string, "highlightStat"?: string (<= 32 chars) }',
+    '"hook_title" -> "hookTitle": { "badge": string, "headline": string (4-8 words), "subheadline": string, "highlightStat"?: string (<= 48 chars, must include comparison e.g. "Neon 61 vs Carbon 60 · $3/M") }',
   benchmark_bars:
     '"benchmark_bars" -> "benchmarkBars": { "title": string, "subtitle"?: string, "metricUnit": string, "sourceLabel": string, "bars": [{ "label": string (<=24 chars), "value": number, "isWinner"?: boolean, "note"?: string }] }',
   code_compare:
@@ -83,20 +83,32 @@ function buildSystemPrompt(
   allowedMiddleTypes: readonly SceneType[],
   brollEnabled: boolean,
 ): string {
+  const dataFirstOpeners = (['benchmark_bars', 'versus_split', 'big_stat', 'code_compare', 'myth_fact'] as const).filter(
+    (t) => allowedMiddleTypes.includes(t),
+  );
+  const openerNote =
+    dataFirstOpeners.length > 0
+      ? `Scene 1 may be either ${dataFirstOpeners.map((t) => `"${t}"`).join(', ')} (lead directly with visual receipts in Second 1!) OR "hook_title" with a comparison highlightStat.`
+      : 'Scene 1 MUST be type "hook_title" with a punchy 4-8 word headline and concrete comparison highlightStat.';
+
   if (!formatSpec) {
     return [
-      'You are an elite technical producer creating 35 to 55 second vertical Instagram Reels (9:16) for software engineers and AI builders.',
-      'Write crisp, high-signal, zero-fluff English narration and structured visual scenes.',
+      'You are a sharp technical video creator making tight 20 to 28 second vertical Reels (9:16) for software engineers and AI builders.',
+      'Write crisp, conversational English like a senior engineer texting a teammate - dense reference facts, zero hype.',
       'Rules you MUST follow strictly:',
-      '1. Output 5 scenes in JSON matching the exact schema.',
-      '2. Scene 1 MUST be type "hook_title" with a punchy 4-8 word headline and strong hook narration.',
-      '3. Scenes 2-4 MUST use the most informative visual scenes from: "benchmark_bars", "code_compare", "terminal_demo", "news_quote_card".',
-      '4. Scene 5 MUST be type "takeaway_cta" with one sharp, actionable developer takeaway for this topic. Do NOT include a generic "follow this channel" sign-off in Scene 5 narration because a dedicated channel outro scene is appended automatically.',
-      '5. Spoken narration total across Scenes 1-5 MUST be between 75 and 130 words, with at least 8 words per scene.',
-      '6. Every line inside codeCompare.beforeCode and codeCompare.afterCode MUST be <= 36 characters and at most 10 lines total so code stays sharp on mobile screens.',
-      '7. Every benchmark bar label MUST be <= 24 characters and use accurate numbers from the topic (never invent fake benchmark scores).',
-      '8. Keep caption punchy (2-4 short lines + call to action) and provide 5-8 relevant developer hashtags.',
-      '9. Never include stage directions or brackets like [pause] inside narration.',
+      '1. Output 5 scenes in JSON matching the exact schema. Do NOT add a channel outro or "follow this channel" sign-off because a dedicated channel outro scene is appended automatically.',
+      `2. ${openerNote}`,
+      '3. Middle scenes MUST use the highest-signal visual scenes from: "benchmark_bars", "code_compare", "terminal_demo", "news_quote_card".',
+      '4. Focus on ONE story and ONE sharp angle. If the source mentions unrelated secondary news (e.g. an IPO or M&A deal), drop the side story completely.',
+      '5. Never show an isolated score (like "61") without showing what it beats, the baseline/flagship leader, or the $/M token cost difference.',
+      '6. Final scene MUST be type "takeaway_cta" ending on a sharp engineering rule, actionable check, or developer question (ctaText <= 46 chars, written as a concrete technical check or question, NEVER "Follow this channel").',
+      '7. Total spoken narration across all scenes MUST be tight: 50 to 90 words total (8 to 16 words per scene, 1 crisp claim per scene so visuals cut every 2.5-4s).',
+      '8. Ban AI-slop filler: NEVER write "Same day, two massive signals", "the whole conversation changes", "colliding within 24 hours", "here is your move", "game-changer", or "let\'s dive in".',
+      '9. Every line inside codeCompare.beforeCode and codeCompare.afterCode MUST be genuine runnable syntax, config (JSON/YAML), git diff, or real CLI commands (NEVER plain English prose sentences), <= 36 characters wide and at most 10 lines total (<= 16 combined lines in before_after).',
+      '10. Include "visual": { "emphasis": ["word1", "word2"] } copying 1-2 exact words verbatim from that scene headline/title/label/fact/postText (never from narration).',
+      '11. Every benchmark bar label MUST be <= 24 characters and use verified numbers from the topic (never invent fake benchmark scores).',
+      '12. Structure the Instagram caption for saves & debate: Line 1 crisp hook summary; middle 3 short "- " mini-cheatsheet takeaways; final line 1 sharp developer debate question (NEVER spammy "Comment KEYWORD", "DM me", "Link in bio", or "Follow @..."). Provide 3-5 clean, accurately spelled lowercase developer hashtags.',
+      '13. Never include stage directions, brackets like [pause], or em-dashes inside narration or captions; use commas or periods instead.',
     ].join('\n');
   }
 
@@ -105,8 +117,8 @@ function buildSystemPrompt(
     minScenes === maxScenes ? `exactly ${minScenes}` : `${minScenes} to ${maxScenes}`;
 
   const lines: string[] = [
-    'You are an elite technical producer creating high-retention vertical Instagram Reels (9:16) for software engineers and AI builders.',
-    'Write crisp, varied, zero-fluff English narration and structured visual scenes tailored to the assigned format.',
+    'You are a sharp technical video creator making tight 20 to 28 second vertical Reels (9:16) for software engineers and AI builders.',
+    'Write crisp, conversational English like a senior engineer texting a teammate - dense reference data, zero AI hype.',
     '',
     `Reel Format: ${formatSpec.id} (${formatSpec.label})`,
     `Format Goal: ${formatSpec.description}`,
@@ -124,14 +136,14 @@ function buildSystemPrompt(
     ...formatSpec.recipe.map((step) => `- ${step}`),
     '',
     'Rules you MUST follow strictly:',
-    `1. Output ${sceneRangeLabel} scenes in JSON matching the exact schema (do NOT add a generic channel outro; it is appended automatically).`,
-    '2. Scene 1 MUST be type "hook_title" with a punchy 4-8 word headline and strong hook narration.',
-    `3. Middle scenes MUST use ONLY these scene types: ${allowedMiddleTypes.map((t) => `"${t}"`).join(', ')}.`,
+    `1. Output ${sceneRangeLabel} scenes in JSON matching the exact schema. Do NOT add a channel outro or "follow this channel" sign-off because a dedicated channel outro scene is appended automatically.`,
+    `2. ${openerNote}`,
+    `3. Body scenes (before takeaway_cta) MUST use ONLY these scene types: ${allowedMiddleTypes.map((t) => `"${t}"`).join(', ')} (plus "hook_title" if used in Scene 1).`,
   );
 
   if (formatSpec.requiredTypes.length > 0) {
     lines.push(
-      `   - Required middle scene type(s): ${formatSpec.requiredTypes.map((t) => `"${t}"`).join(', ')}.`,
+      `   - Required visual scene type(s): ${formatSpec.requiredTypes.map((t) => `"${t}"`).join(', ')}.`,
     );
   }
   if (formatSpec.requiredAnyOf && formatSpec.requiredAnyOf.length > 0) {
@@ -153,33 +165,36 @@ function buildSystemPrompt(
   }
 
   lines.push(
-    '4. Final scene MUST be type "takeaway_cta" with one sharp, actionable developer takeaway for this topic. Do NOT include a generic "follow this channel" sign-off.',
-    '5. Spoken narration total across your scenes MUST be between 75 and 155 words, with at least 8 words per scene.',
-    '6. Optionally include "visual": { "emphasis": ["word1", "word2"] } (1-3 short highlight words/numbers that appear in that scene headline/title) to drive kinetic emphasis.',
-    '7. Every line inside codeCompare.beforeCode and codeCompare.afterCode MUST be <= 36 characters and at most 10 lines total.',
-    '8. For benchmark_bars and line_chart, use accurate numbers from the topic (never invent fake benchmark scores).',
-    '9. For social_post, postText MUST be a verbatim quote from the topic summary (do not invent fake posts).',
-    '10. Keep caption punchy (2-4 short lines + call to action) and provide 5-8 relevant developer hashtags.',
-    '11. Never include stage directions or brackets like [pause] inside narration.',
+    '4. Focus on ONE story and ONE sharp angle. If the topic text is a digest mentioning multiple unrelated stories, cover ONLY the single strongest technical story and drop the rest.',
+    '5. Never show an isolated score or stat without context - always pair numbers on screen with what they beat, the flagship baseline, or the $/M token cost difference.',
+    '6. Final scene MUST be type "takeaway_cta" ending on a sharp engineering rule, actionable check, or developer question (ctaText <= 46 chars, written as a sharp technical check or question, NEVER "Follow this channel").',
+    '7. Total spoken narration across all scenes MUST be tight: 50 to 90 words total (8 to 16 words per scene, 1 crisp claim per scene = 2.5-4s visual cuts).',
+    '8. Ban AI-slop filler: NEVER write "Same day, two massive signals", "the whole conversation changes", "colliding within 24 hours", "here is your move", "game-changer", or "let\'s dive in".',
+    '9. Include "visual": { "emphasis": ["word1", "word2"] } copying 1-2 exact words verbatim from that scene headline/title/label/fact/postText (never from narration) to drive kinetic emphasis.',
+    '10. Every line inside codeCompare.beforeCode and codeCompare.afterCode MUST be genuine runnable syntax, config (JSON/YAML), git diff, or real CLI commands (NEVER plain English prose sentences), <= 36 characters wide and at most 10 lines total (<= 16 combined lines in before_after).',
+    '11. For benchmark_bars and line_chart, use verified numbers from the topic (never invent fake benchmark scores).',
+    '12. For social_post, postText MUST be a verbatim quote from the topic summary (do not invent fake posts).',
+    '13. Structure Instagram caption for saves & debate: Line 1 crisp hook summary; middle 3 short "- " mini-cheatsheet bullets; final line 1 sharp developer debate question (NEVER spammy "Comment KEYWORD", "DM me", "Link in bio", or "Follow @..."). Provide 3-5 clean, accurately spelled lowercase developer hashtags.',
+    '14. Never include stage directions, brackets like [pause], or em-dashes inside narration or captions; use commas or periods instead.',
   );
 
   return lines.join('\n');
 }
 
 function buildOpenAIJsonSchemaGuidance(allowedTypes: readonly SceneType[]): string {
-  const middleTypes = allowedTypes.filter((t) => t !== 'hook_title' && t !== 'takeaway_cta');
-  const middleLines = middleTypes.map((t) => `      ${OPEN_AI_SCENE_SHAPES[t]}`);
+  const bodyTypes = allowedTypes.filter((t) => t !== 'takeaway_cta');
+  const bodyLines = bodyTypes.map((t) => `      ${OPEN_AI_SCENE_SHAPES[t]}`);
   return [
     'Return ONLY a single valid JSON object (no markdown fences, no prose) with this exact structure:',
     '{',
     '  "title": string (min 6 chars),',
     '  "pillar": "ai_news" | "benchmarks" | "harnesses" | "coding_practices" | "vibe_coding",',
-    '  "caption": string,',
-    '  "hashtags": string[] (3-10 tags like "#ai"),',
+    '  "caption": string (Line 1 hook + 3 "- " mini-cheatsheet bullets + 1 dev debate question),',
+    '  "hashtags": string[] (3-5 clean lowercase tags like "#ai"),',
     '  "scenes": [',
-    `    { "id": "scene-1", "type": "hook_title", "narration": string, "visual"?: { "emphasis"?: string[] }, ${OPEN_AI_SCENE_SHAPES.hook_title.split(' -> ')[1]} },`,
-    '    ... (middle scenes using ONLY these allowed types and wrapper keys):',
-    ...middleLines,
+    '    // Scene 1: "hook_title" OR a data-first receipt ("benchmark_bars" | "versus_split" | "big_stat" | "code_compare" | "myth_fact" if allowed below)',
+    '    // Middle scenes using ONLY these allowed types and wrapper keys:',
+    ...bodyLines,
     `    { "id": "scene-last", "type": "takeaway_cta", "narration": string, "visual"?: { "emphasis"?: string[] }, ${OPEN_AI_SCENE_SHAPES.takeaway_cta.split(' -> ')[1]} }`,
     '  ]',
     '}',
@@ -192,10 +207,15 @@ function buildUserPrompt(
   history: readonly ReelFingerprint[],
   previousErrors?: string[],
 ): string {
+  const cleanHandle = brandHandle.trim();
+  const handleGuidance = cleanHandle
+    ? `Brand Handle (for optional CTA context only): ${cleanHandle} (never leak @ai.dev.reels)`
+    : 'Brand Handle: none configured. Do NOT invent any @handle, never write "Follow @...", and never use @ai.dev.reels.';
+
   const parts = [
     `Target Pillar: ${topic.pillar} (${PILLAR_LABELS[topic.pillar as ContentPillar]})`,
     `Source: ${topic.sourceName} (${topic.sourceUrl})`,
-    `Brand Handle (for CTA context only): ${brandHandle}`,
+    handleGuidance,
     `Topic Title: ${topic.title}`,
     `Topic Summary & Facts:\n${topic.summary}`,
   ];
@@ -380,6 +400,8 @@ export async function generateStoryboard(
       const withOutro = appendChannelOutroScene(converted);
       const editorial = validateStoryboardEditorial(withOutro, {
         allowAiMediaClip: brollEnabled,
+        brandHandle: input.brandHandle,
+        rejectDefaultBrandLeak: true,
       });
 
       const combinedErrors = [...editorial.errors];

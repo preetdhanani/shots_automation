@@ -33,6 +33,7 @@ export interface VerifyHarness {
   seededReadyReelId: string;
   seededPublishedReelId: string;
   seededTopicIds: string[];
+  createTempSpacingFixtures?: () => { candidateId: string; cleanup: () => void };
   close: () => Promise<void>;
 }
 
@@ -47,7 +48,7 @@ function generateTinyValidMedia(workDir: string): {
   const voice48kPath = path.join(workDir, 'fixture-voice-48k.wav');
   const voice16kPath = path.join(workDir, 'fixture-voice-16k.wav');
 
-  // 5-second vertical 30fps MP4 (>= 3s Instagram Reels spec minimum)
+  // 5-second spec-valid 1080x1920 30fps H.264 + stereo 48kHz AAC MP4
   execFileSync(
     'ffmpeg',
     [
@@ -55,7 +56,7 @@ function generateTinyValidMedia(workDir: string): {
       '-f',
       'lavfi',
       '-i',
-      'color=c=0x162033:s=360x640:r=30:d=5',
+      'testsrc2=size=1080x1920:rate=30:duration=5',
       '-f',
       'lavfi',
       '-i',
@@ -64,10 +65,16 @@ function generateTinyValidMedia(workDir: string): {
       '5',
       '-c:v',
       'libx264',
+      '-preset',
+      'ultrafast',
       '-pix_fmt',
       'yuv420p',
       '-c:a',
       'aac',
+      '-ac',
+      '2',
+      '-ar',
+      '48000',
       '-shortest',
       mp4Path,
     ],
@@ -231,7 +238,7 @@ function startMockOpenAIServer(): Promise<{ baseUrl: string; close: () => Promis
         generationSeq++;
         const formatId = extractFormatFromPrompt(systemMsg);
         const template = structuredClone(FORMAT_SAMPLE_STORYBOARDS[formatId]);
-        // Strip channel outro because generateStoryboard appends it automatically
+        // Strip legacy channel outro if present
         const contentScenes = template.scenes.filter((s) => !isChannelOutroScene(s));
         const prefix = UNIQUE_HOOK_PREFIXES[(generationSeq - 1) % UNIQUE_HOOK_PREFIXES.length]!;
         const freshHeadline =
@@ -294,7 +301,14 @@ function seedFixtureData(
   storage: LocalAssetStorage,
   media: { mp4Path: string; jpgPath: string; voice48kPath: string; voice16kPath: string },
 ): { readyReel: ReelRecord; publishedReel: ReelRecord; topics: TopicRecord[] } {
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const dayMs = 86_400_000;
+  const nowIso = new Date(nowMs).toISOString();
+  const twoDaysAgoIso = new Date(nowMs - 2 * dayMs).toISOString();
+  const fiveDaysAgoIso = new Date(nowMs - 5 * dayMs).toISOString();
+  const twelveDaysAgoIso = new Date(nowMs - 12 * dayMs).toISOString();
+  const fortyFiveDaysAgoIso = new Date(nowMs - 45 * dayMs).toISOString();
+
   const { topics } = store.upsertTopics([
     {
       topicFingerprint: 'verify-topic-1',
@@ -318,7 +332,7 @@ function seedFixtureData(
       sourceUrl: 'https://www.swebench.com/verify-study',
       canonicalUrlHash: 'hash-verify-2',
       pillar: 'benchmarks',
-      publishedAt: nowIso,
+      publishedAt: twoDaysAgoIso,
       score: 91,
       rawPayloadJson: '{}',
     },
@@ -331,13 +345,39 @@ function seedFixtureData(
       sourceUrl: 'https://example.com/vibe-coding-tips',
       canonicalUrlHash: 'hash-verify-3',
       pillar: 'vibe_coding',
-      publishedAt: nowIso,
+      publishedAt: fiveDaysAgoIso,
       score: 88,
+      rawPayloadJson: '{}',
+    },
+    {
+      topicFingerprint: 'verify-topic-4',
+      title: 'Legacy Prompt Engineering Guide for Early Chatbots',
+      summary:
+        'Historical notes from two weeks ago covering static prompt templates before modern coding agent harnesses.',
+      sourceName: 'Dev Archive',
+      sourceUrl: 'https://example.com/legacy-prompt-guide',
+      canonicalUrlHash: 'hash-verify-4',
+      pillar: 'coding_practices',
+      publishedAt: twelveDaysAgoIso,
+      score: 74,
+      rawPayloadJson: '{}',
+    },
+    {
+      topicFingerprint: 'verify-topic-5',
+      title: 'Archive: Early Transformer Attention Paper Walkthrough',
+      summary:
+        'Older research recap from last month reviewing foundational multi-head attention mechanics and positional encodings.',
+      sourceName: 'ML Classics',
+      sourceUrl: 'https://example.com/early-transformer-walkthrough',
+      canonicalUrlHash: 'hash-verify-5',
+      pillar: 'ai_news',
+      publishedAt: fortyFiveDaysAgoIso,
+      score: 68,
       rawPayloadJson: '{}',
     },
   ]);
 
-  const brandHandle = '@ai.dev.reels';
+  const brandHandle = '@verify.studio';
   const narrationHash = computeNarrationHash(SAMPLE_DEMO_STORYBOARD);
   const visualHash = computeStoryboardVisualHash(SAMPLE_DEMO_STORYBOARD, true, brandHandle);
 
@@ -469,8 +509,9 @@ export async function startVerifyHarness(workspaceRoot: string): Promise<VerifyH
     META_IG_USER_ID: '',
     META_ACCESS_TOKEN: '',
     GITHUB_TOKEN: '',
-    BRAND_HANDLE: '@ai.dev.reels',
+    BRAND_HANDLE: '@verify.studio',
     WHISPER_CLI_PATH: '',
+    MAX_CONCURRENT_RENDERS: 2,
     SERVER_PORT: 4310,
     DATA_DIR: dataDir,
     WORKSPACE_ROOT: workspaceRoot,
@@ -482,7 +523,7 @@ export async function startVerifyHarness(workspaceRoot: string): Promise<VerifyH
   storage.ensureBaseDirs();
 
   const store = new SqliteStore(path.join(dataDir, 'post.db'));
-  const queue = new PipelineQueue(store);
+  const queue = new PipelineQueue(store, { maxConcurrentRenders: env.MAX_CONCURRENT_RENDERS });
 
   const fastRenderVideo: RenderVideoCallback = async ({ outputVideoPath, onRenderProgress }) => {
     onRenderProgress?.(50, 75, 150);
@@ -601,6 +642,80 @@ export async function startVerifyHarness(workspaceRoot: string): Promise<VerifyH
     seededReadyReelId: seeded.readyReel.id,
     seededPublishedReelId: seeded.publishedReel.id,
     seededTopicIds: seeded.topics.map((t) => t.id),
+    createTempSpacingFixtures: () => {
+      const publishedTemp = store.createReel({
+        topicId: seeded.topics[1]!.id,
+        isSample: false,
+        title: 'Temporary Recent Published Anchor Reel',
+        pillar: 'benchmarks',
+        status: 'READY_FOR_REVIEW',
+        storyboard: SAMPLE_DEMO_STORYBOARD,
+        caption: SAMPLE_DEMO_STORYBOARD.caption,
+        hashtags: SAMPLE_DEMO_STORYBOARD.hashtags,
+        voiceName: 'Fenrir',
+        musicEnabled: true,
+      });
+      store.updateReel(publishedTemp.id, {
+        status: 'PUBLISHED',
+        publishedAt: new Date().toISOString(),
+        instagramMediaId: 'ig_temp_spacing_anchor',
+      });
+
+      const tempReel = store.createReel({
+        topicId: seeded.topics[0]!.id,
+        isSample: false,
+        title: 'Temporary Spacing Guardrail Check Reel',
+        pillar: SAMPLE_DEMO_STORYBOARD.pillar,
+        status: 'READY_FOR_REVIEW',
+        storyboard: SAMPLE_DEMO_STORYBOARD,
+        caption: SAMPLE_DEMO_STORYBOARD.caption,
+        hashtags: SAMPLE_DEMO_STORYBOARD.hashtags,
+        voiceName: 'Puck',
+        musicEnabled: true,
+      });
+      storage.ensureReelDir(tempReel.id);
+      const vid = storage.reelFile(tempReel.id, 'final.mp4');
+      const cov = storage.reelFile(tempReel.id, 'cover.jpg');
+      fs.copyFileSync(media.mp4Path, vid);
+      fs.copyFileSync(media.jpgPath, cov);
+      fs.copyFileSync(media.voice48kPath, storage.reelFile(tempReel.id, 'voice-48k.wav'));
+      fs.copyFileSync(media.voice16kPath, storage.reelFile(tempReel.id, 'voice-16k.wav'));
+      fs.writeFileSync(
+        storage.reelFile(tempReel.id, 'captions.json'),
+        JSON.stringify({
+          alignmentMode: 'estimated',
+          audioDurationMs: 5000,
+          fps: 30,
+          captions: [],
+          sceneTimings: SAMPLE_DEMO_STORYBOARD.scenes.map((scene, idx) => ({
+            sceneId: scene.id,
+            sceneType: scene.type,
+            label: scene.type,
+            startMs: idx * 800,
+            endMs: (idx + 1) * 800,
+            startFrame: idx * 24,
+            durationInFrames: 24,
+          })),
+        }),
+      );
+      store.updateReel(tempReel.id, {
+        videoPath: vid,
+        coverPath: cov,
+        audioDurationMs: 5000,
+        renderedNarrationHash: computeNarrationHash(SAMPLE_DEMO_STORYBOARD),
+        renderedVoiceName: 'Puck',
+        renderedStoryboardHash: computeStoryboardVisualHash(SAMPLE_DEMO_STORYBOARD, true, '@verify.studio'),
+      });
+      return {
+        candidateId: tempReel.id,
+        cleanup: () => {
+          store.deleteReel(tempReel.id);
+          storage.deleteReelDir(tempReel.id);
+          store.deleteReel(publishedTemp.id);
+          storage.deleteReelDir(publishedTemp.id);
+        },
+      };
+    },
     close: async () => {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());

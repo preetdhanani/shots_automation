@@ -17,6 +17,7 @@ Config.overrideWebpackConfig((config) => ({
     },
     alias: {
       ...config.resolve?.alias,
+      '@post/core/shared': path.join(workspaceRoot, 'packages', 'core', 'src', 'shared.ts'),
       '@post/core': path.join(workspaceRoot, 'packages', 'core', 'src', 'shared.ts'),
     },
   },

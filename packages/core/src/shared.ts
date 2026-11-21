@@ -7,7 +7,10 @@ export {
   BigStatSceneSchema,
   CameraMoveIdSchema,
   CaptionStyleIdSchema,
+  CHANNEL_OUTRO_ESTIMATED_GAP_MS,
   CHANNEL_OUTRO_NARRATION,
+  CHANNEL_OUTRO_PAUSE_MS,
+  CHANNEL_OUTRO_TAIL_PAD_MS,
   ChecklistItemSchema,
   ChecklistStepsSceneSchema,
   CodeCompareSceneSchema,
@@ -19,6 +22,7 @@ export {
   HookTitleSceneSchema,
   isChannelOutroScene,
   isSafeAssetFilename,
+  looksLikeFakeCodeProse,
   LineChartPointSchema,
   LineChartSceneSchema,
   MusicMoodIdSchema,
@@ -34,6 +38,7 @@ export {
   ReelStyleSchema,
   SAFE_ASSET_FILENAME_RE,
   sanitizeAssetSegment,
+  sanitizeHashtags,
   SceneVisualSchema,
   SOCIAL_PLATFORMS,
   SocialPostSceneSchema,
@@ -135,6 +140,7 @@ export {
   computeFreshness,
   computeReelFingerprint,
   extractOpeningWords,
+  extractSceneHookHeadline,
   fingerprintSimilarity,
   jaccardSimilarity as varietyJaccardSimilarity,
   normalizeWordTokens,
@@ -159,6 +165,18 @@ export {
   type VarietyCheckResult,
   type VarietyValidationOptions,
 } from './variety/validator.js';
+
+export {
+  cleanEmphasisToken,
+  getSceneEmphasisTargetText,
+  repairSceneEmphasis,
+} from './variety/emphasis.js';
+
+export {
+  checkPublishSpacing,
+  DEFAULT_MIN_PUBLISH_SPACING_HOURS,
+  type PublishSpacingStatus,
+} from './publish/spacing.js';
 
 export {
   BROLL_SAMPLE_STORYBOARD,
@@ -193,3 +211,17 @@ export {
   type LlmEndpointSource,
   type LlmProvider,
 } from './schemas/llm.js';
+
+export {
+  computeFeedCleanCutoffMs,
+  FEED_CLEAN_INTERVAL_OPTIONS,
+  FEED_CLEAN_INTERVALS,
+  FeedCleanIntervalSchema,
+  getFeedCleanIntervalOption,
+  isTopicOlderThanCutoff,
+  parseTopicTimestampMs,
+  summarizeFeedCleanByInterval,
+  type FeedCleanInterval,
+  type FeedCleanIntervalCounts,
+  type FeedCleanIntervalOption,
+} from './discovery/cleaner.js';

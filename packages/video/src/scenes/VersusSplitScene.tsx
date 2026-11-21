@@ -3,6 +3,8 @@ import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type VersusSplitScene as VersusData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames, getActiveBeatIndex } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: VersusData;
@@ -12,11 +14,23 @@ export const VersusSplitScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { isFirst, durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('versus_split', scene.visual?.layout);
 
-  const leftSpring = spring({ frame: Math.max(0, frame - 2), fps, config: { damping: 16, stiffness: 140 } });
-  const rightSpring = spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 16, stiffness: 140 } });
-  const verdictSpring = spring({ frame: Math.max(0, frame - 14), fps, config: { damping: 15, stiffness: 145 } });
+  const leftSpring = isFirst
+    ? 1
+    : spring({ frame: Math.max(0, frame - 2), fps, config: { damping: 16, stiffness: 140 } });
+  const rightSpring = isFirst
+    ? 1
+    : spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 16, stiffness: 140 } });
+  const verdictSpring = isFirst
+    ? 1
+    : spring({ frame: Math.max(0, frame - 14), fps, config: { damping: 15, stiffness: 145 } });
+  const beatFrames = computeBeatFrames(durationInFrames, 3, words, {
+    startFrac: 0.14,
+    endFrac: 0.74,
+  });
+  const activeBeat = getActiveBeatIndex(frame, beatFrames);
 
   const renderSide = (
     side: VersusData['left'],
@@ -26,23 +40,30 @@ export const VersusSplitScene: React.FC<Props> = ({ scene }) => {
   ) => {
     const isWinner = scene.winner === which;
     const isLoser = scene.winner && scene.winner !== 'tie' && scene.winner !== which;
+    const isFocusedBeat =
+      (which === 'left' && activeBeat === 0) ||
+      (which === 'right' && (activeBeat === 1 || (activeBeat >= 2 && isWinner)));
     const accent = which === 'left' ? palette.secondary : palette.accent;
     return (
       <div
         style={{
           flex: 1,
-          opacity: anim,
-          transform: `translateY(${interpolate(anim, [0, 1], [22, 0])}px)`,
+          opacity: anim * (isFocusedBeat ? 1 : 0.86),
+          transform: `translateY(${interpolate(anim, [0, 1], [22, 0])}px) scale(${isFocusedBeat ? 1.01 : 0.99})`,
           backgroundColor: isWinner ? palette.accentSoft : palette.surface,
-          border: isWinner
-            ? `2px solid ${palette.accentBorder}`
-            : `1.5px solid ${palette.surfaceBorder}`,
+          border:
+            isWinner || isFocusedBeat
+              ? `2px solid ${palette.accentBorder}`
+              : `1.5px solid ${palette.surfaceBorder}`,
           borderRadius: 24,
           padding: compact ? '24px 22px' : '26px 28px',
           display: 'flex',
           flexDirection: 'column',
           gap: 16,
-          boxShadow: isWinner ? `0 18px 46px rgba(0,0,0,0.5), 0 0 28px ${palette.glow}` : undefined,
+          boxShadow:
+            isWinner || isFocusedBeat
+              ? `0 18px 46px rgba(0,0,0,0.5), 0 0 28px ${palette.glow}`
+              : undefined,
         }}
       >
         <div
@@ -188,13 +209,14 @@ export const VersusSplitScene: React.FC<Props> = ({ scene }) => {
         <div
           style={{
             opacity: verdictSpring,
-            backgroundColor: 'rgba(255,255,255,0.05)',
+            backgroundColor: activeBeat >= 2 ? palette.accentSoft : 'rgba(255,255,255,0.05)',
             borderLeft: `4px solid ${palette.accent}`,
             borderRadius: 14,
             padding: '16px 20px',
             fontSize: 25,
             fontWeight: 600,
             color: '#F4F4F5',
+            boxShadow: activeBeat >= 2 ? `0 0 24px ${palette.glow}` : undefined,
           }}
         >
           {scene.verdict}

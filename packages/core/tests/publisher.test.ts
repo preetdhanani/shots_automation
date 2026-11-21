@@ -129,7 +129,7 @@ describe('InstagramGraphPublisher & Crash Reconciliation', () => {
       if (url.endsWith('/178414000/media') && method === 'POST') {
         expect(headers.get('authorization')).toBe('Bearer meta_tok');
         expect(typeof init?.body === 'string' && init.body).toContain('upload_type=resumable');
-        expect(typeof init?.body === 'string' && init.body).toContain('thumb_offset=800');
+        expect(typeof init?.body === 'string' && init.body).toContain('thumb_offset=0');
         return new Response(
           JSON.stringify({
             id: 'container_999',
@@ -199,6 +199,42 @@ describe('InstagramGraphPublisher & Crash Reconciliation', () => {
 
     // Concurrent second publish claim fails cleanly
     expect(store.claimReelForPublish(reel.id)).toBe(false);
+
+    // Publish spacing guardrail blocks back-to-back uploads unless bypassSpacing is true
+    const reel2 = store.createReel({
+      topicId: null,
+      isSample: false,
+      pillar: 'benchmarks',
+      status: 'READY_FOR_REVIEW',
+      title: 'Second Reel',
+      storyboard: SAMPLE_DEMO_STORYBOARD,
+      caption: 'Second breakdown',
+      hashtags: ['#ai', '#benchmarks', '#dev'],
+      voiceName: 'Puck',
+    });
+    const mp4Path2 = storage.reelFile(reel2.id, 'final.mp4');
+    createValidTestMp4(mp4Path2);
+    store.updateReel(reel2.id, { videoPath: mp4Path2 });
+    store.updateSettings(
+      { minPublishSpacingHours: 6 },
+      {
+        defaultVoice: 'Puck',
+        brandHandle: '',
+        musicEnabled: true,
+        musicVolumeDb: -17,
+        minPublishSpacingHours: 6,
+        activeLlmEndpointId: null,
+        aiBrollEnabled: false,
+        voiceRotation: false,
+      },
+    );
+
+    await expect(publisher.publish(store.getReel(reel2.id)!)).rejects.toThrow(
+      /Publish spacing guardrail/,
+    );
+
+    const bypassed = await publisher.publish(store.getReel(reel2.id)!, { bypassSpacing: true });
+    expect(bypassed.published).toBe(true);
   });
 
   it('preserves live CLI pipeline runs on boot reconciliation while recovering dead server runs', () => {

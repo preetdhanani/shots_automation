@@ -3,6 +3,8 @@ import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveLayout, type TimelineScene as TimelineData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
+import { computeBeatFrames, getActiveBeatIndex } from '../style/sceneRuntimeHelpers.js';
 
 interface Props {
   scene: TimelineData;
@@ -12,9 +14,16 @@ export const TimelineScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames, words } = useSceneRuntime();
   const layout = resolveLayout('timeline', scene.visual?.layout);
 
-  const lineProgress = interpolate(frame, [4, 24], [0, 100], {
+  const eventBeats = computeBeatFrames(durationInFrames, Math.max(1, scene.events.length), words, {
+    startFrac: 0.1,
+    endFrac: 0.8,
+  });
+  const activeEventIdx = getActiveBeatIndex(frame, eventBeats);
+  const progressEnd = Math.max(24, eventBeats[eventBeats.length - 1] ?? Math.round(durationInFrames * 0.8));
+  const lineProgress = interpolate(frame, [4, progressEnd], [12, 100], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
@@ -67,32 +76,35 @@ export const TimelineScene: React.FC<Props> = ({ scene }) => {
 
           {scene.events.map((ev, idx) => {
             const evSpring = spring({
-              frame: Math.max(0, frame - (4 + idx * 5)),
+              frame: Math.max(0, frame - idx * 4),
               fps,
               config: { damping: 16, stiffness: 145 },
             });
             const isLeft = idx % 2 === 0;
+            const isActiveEvent = idx === activeEventIdx;
             return (
               <div
                 key={idx}
                 style={{
                   display: 'flex',
                   justifyContent: isLeft ? 'flex-start' : 'flex-end',
-                  opacity: evSpring,
-                  transform: `translateX(${interpolate(evSpring, [0, 1], [isLeft ? -26 : 26, 0])}px)`,
+                  opacity: evSpring * (isActiveEvent ? 1 : 0.8),
+                  transform: `translateX(${interpolate(evSpring, [0, 1], [isLeft ? -26 : 26, 0])}px) scale(${isActiveEvent ? 1.015 : 1})`,
                 }}
               >
                 <div
                   style={{
                     width: '82%',
-                    backgroundColor: palette.surface,
-                    border: `1.5px solid ${idx === scene.events.length - 1 ? palette.accentBorder : palette.surfaceBorder}`,
+                    backgroundColor: isActiveEvent ? palette.accentSoft : palette.surface,
+                    border: `1.5px solid ${isActiveEvent || idx === scene.events.length - 1 ? palette.accentBorder : palette.surfaceBorder}`,
                     borderRadius: 20,
                     padding: '18px 22px',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
-                    boxShadow: '0 14px 36px rgba(0,0,0,0.45)',
+                    boxShadow: isActiveEvent
+                      ? `0 14px 36px rgba(0,0,0,0.45), 0 0 22px ${palette.glow}`
+                      : '0 14px 36px rgba(0,0,0,0.45)',
                   }}
                 >
                   <span
@@ -176,22 +188,24 @@ export const TimelineScene: React.FC<Props> = ({ scene }) => {
 
         {scene.events.map((ev, idx) => {
           const evSpring = spring({
-            frame: Math.max(0, frame - (4 + idx * 6)),
+            frame: Math.max(0, frame - idx * 4),
             fps,
             config: { damping: 16, stiffness: 145 },
           });
           const isLast = idx === scene.events.length - 1;
+          const isActiveEvent = idx === activeEventIdx;
           return (
             <div
               key={idx}
               style={{
                 position: 'relative',
-                opacity: evSpring,
-                transform: `translateY(${interpolate(evSpring, [0, 1], [16, 0])}px)`,
-                backgroundColor: isLast ? palette.accentSoft : 'rgba(255,255,255,0.03)',
-                border: isLast
-                  ? `1.5px solid ${palette.accentBorder}`
-                  : '1px solid rgba(255,255,255,0.07)',
+                opacity: evSpring * (isActiveEvent ? 1 : 0.8),
+                transform: `translateY(${interpolate(evSpring, [0, 1], [16, 0])}px) scale(${isActiveEvent ? 1.015 : 1})`,
+                backgroundColor: isActiveEvent || isLast ? palette.accentSoft : 'rgba(255,255,255,0.03)',
+                border:
+                  isActiveEvent || isLast
+                    ? `1.5px solid ${palette.accentBorder}`
+                    : '1px solid rgba(255,255,255,0.07)',
                 borderRadius: 18,
                 padding: '18px 22px',
                 display: 'flex',
@@ -207,9 +221,9 @@ export const TimelineScene: React.FC<Props> = ({ scene }) => {
                   width: 18,
                   height: 18,
                   borderRadius: 999,
-                  backgroundColor: isLast ? palette.accent : '#18181B',
+                  backgroundColor: isActiveEvent || isLast ? palette.accent : '#18181B',
                   border: `3px solid ${palette.accent}`,
-                  boxShadow: isLast ? `0 0 16px ${palette.glow}` : undefined,
+                  boxShadow: isActiveEvent || isLast ? `0 0 16px ${palette.glow}` : undefined,
                 }}
               />
               <span

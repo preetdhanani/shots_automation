@@ -1,8 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { ContentPillar, ReelFormatId, VoiceName } from '@post/core/shared';
+import {
+  getFeedCleanIntervalOption,
+  type ContentPillar,
+  type FeedCleanInterval,
+  type ReelFormatId,
+  type VoiceName,
+} from '@post/core/shared';
 import { Archive, CheckSquare, Compass, Layers, Loader2, Plus, Settings, Sparkles, X } from 'lucide-react';
 import {
   apiFetch,
+  type FeedCleanResultDto,
   type GeminiCheckDto,
   type HealthDto,
   type LlmStateDto,
@@ -11,6 +18,7 @@ import {
   type ReelDto,
   type TopicDto,
 } from './api.js';
+import { CleanFeedModal } from './components/CleanFeedModal.js';
 import { CustomReelModal } from './components/CustomReelModal.js';
 import { SetupReadinessStrip } from './components/SetupReadinessStrip.js';
 import { ToastStack, type ToastItem } from './components/Toast.js';
@@ -69,7 +77,7 @@ export const App: React.FC = () => {
   const [topics, setTopics] = useState<TopicDto[]>([]);
   const [reels, setReels] = useState<ReelDto[]>([]);
   const [activeRuns, setActiveRuns] = useState<PipelineRunDto[]>([]);
-  const [maxConcurrency, setMaxConcurrency] = useState(3);
+  const [maxConcurrency, setMaxConcurrency] = useState(2);
 
   const [topicsLoading, setTopicsLoading] = useState(true);
   const [fetchingTopics, setFetchingTopics] = useState(false);
@@ -77,6 +85,7 @@ export const App: React.FC = () => {
   const [checkingGemini, setCheckingGemini] = useState(false);
   const [switchingLlm, setSwitchingLlm] = useState(false);
   const [customModalOpen, setCustomModalOpen] = useState(false);
+  const [cleanModalOpen, setCleanModalOpen] = useState(false);
   const [selectedTopicForModal, setSelectedTopicForModal] = useState<TopicDto | null>(null);
   const [safeZoneOpen, setSafeZoneOpen] = useState(true);
 
@@ -91,12 +100,12 @@ export const App: React.FC = () => {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const pushToast = useCallback((toast: Omit<ToastItem, 'id'>) => {
+  const pushToast = useCallback((toast: Omit<ToastItem, 'id'>, durationMs = 6500) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setToasts((prev) => [...prev.slice(-3), { id, ...toast }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 6500);
+    }, durationMs);
   }, []);
 
   const navigate = useCallback((next: RouteState) => {
@@ -185,6 +194,7 @@ export const App: React.FC = () => {
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        setCleanModalOpen(false);
         setSelectedTopicForModal(null);
         setCustomModalOpen(true);
         return;
@@ -196,7 +206,7 @@ export const App: React.FC = () => {
         return;
       }
 
-      if (isEditing || customModalOpen || tag === 'button') return;
+      if (isEditing || customModalOpen || cleanModalOpen || tag === 'button') return;
 
       if (route.page === 'review') {
         if (e.key === ' ') {
@@ -215,7 +225,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [route.page, customModalOpen]);
+  }, [route.page, customModalOpen, cleanModalOpen]);
 
   const handleDownloadWhisper = async () => {
     try {
@@ -363,6 +373,53 @@ export const App: React.FC = () => {
         void refreshTopics();
       },
     });
+  };
+
+  const handleCleanTopics = async (interval: FeedCleanInterval) => {
+    const res = await apiFetch<FeedCleanResultDto>('/api/topics/clean', {
+      method: 'POST',
+      body: JSON.stringify({ interval }),
+    });
+    await refreshTopics();
+    const option = getFeedCleanIntervalOption(interval);
+
+    if (res.removedCount > 0 && res.removedIds.length > 0) {
+      pushToast(
+        {
+          title: `Cleaned ${res.removedCount} older ${res.removedCount === 1 ? 'topic' : 'topics'}.`,
+          description: `Kept ${res.keptCount} ${res.keptCount === 1 ? 'topic' : 'topics'} from the ${option.label.toLowerCase()}.`,
+          tone: 'success',
+          undoLabel: 'Undo',
+          onUndo: () => {
+            void (async () => {
+              try {
+                const restored = await apiFetch<{ restoredCount: number }>('/api/topics/restore', {
+                  method: 'POST',
+                  body: JSON.stringify({ ids: res.removedIds }),
+                });
+                await refreshTopics();
+                pushToast({
+                  title: `Restored ${restored.restoredCount} ${restored.restoredCount === 1 ? 'topic' : 'topics'}.`,
+                  tone: 'info',
+                });
+              } catch (err) {
+                pushToast({
+                  title: err instanceof Error ? err.message : 'Failed to restore topics',
+                  tone: 'error',
+                });
+              }
+            })();
+          },
+        },
+        12_000,
+      );
+    } else {
+      pushToast({
+        title: 'Feed is already clean.',
+        description: `All ${res.keptCount} ${res.keptCount === 1 ? 'topic is' : 'topics are'} within the ${option.label.toLowerCase()}.`,
+        tone: 'info',
+      });
+    }
   };
 
   const handleRejectReel = async (reel: ReelDto) => {
@@ -660,6 +717,7 @@ export const App: React.FC = () => {
             scriptLlmReady={Boolean(llmState?.scriptLlmReady ?? health?.geminiConfigured)}
             ttsReady={Boolean(llmState?.ttsReady ?? health?.geminiConfigured)}
             onFetchLatest={handleFetchTopics}
+            onOpenCleanModal={() => setCleanModalOpen(true)}
             onOpenCustomModal={() => {
               setSelectedTopicForModal(null);
               setCustomModalOpen(true);
@@ -711,7 +769,7 @@ export const App: React.FC = () => {
           <ApprovalStudioView
             queueReels={reviewQueueReels}
             selectedReelId={route.reelId}
-            brandHandle={health?.settings.brandHandle ?? '@ai.dev.reels'}
+            brandHandle={health?.settings.brandHandle ?? ''}
             metaStatus={metaCheck}
             videoRef={videoRef}
             safeZoneOpen={safeZoneOpen}
@@ -812,6 +870,14 @@ export const App: React.FC = () => {
             navigate({ page: 'run', runId: res.run.id });
           }
         }}
+        onError={(msg) => pushToast({ title: msg, tone: 'error' })}
+      />
+
+      <CleanFeedModal
+        open={cleanModalOpen}
+        topics={topics}
+        onClose={() => setCleanModalOpen(false)}
+        onClean={handleCleanTopics}
         onError={(msg) => pushToast({ title: msg, tone: 'error' })}
       />
 

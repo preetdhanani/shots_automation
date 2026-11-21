@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   alignStoryboardWithWhisperAnchors,
+  appendChannelOutroScene,
   extractWhisperWordAnchors,
   normalizeSpokenWord,
+  normalizeTextForTts,
   SAMPLE_DEMO_STORYBOARD,
 } from '@post/core';
 
@@ -77,10 +79,129 @@ describe('1-to-N Script-to-Whisper Aligner', () => {
     }
   });
 
-  it('falls back cleanly to weighted estimated mode when Whisper anchors are empty', () => {
-    const res = alignStoryboardWithWhisperAnchors(SAMPLE_DEMO_STORYBOARD, [], 38_000, 30);
+  it('clamps multiple overflowing trailing Whisper anchors inside audioDurationMs monotonically', () => {
+    const words = SAMPLE_DEMO_STORYBOARD.scenes.flatMap((s) => s.narration.trim().split(/\s+/));
+    let clockMs = 150;
+    const anchors = words.flatMap((w) => {
+      const spoken = normalizeSpokenWord(w);
+      return (spoken.length > 0 ? spoken : [w.toLowerCase()]).map((normWord) => {
+        const startMs = clockMs;
+        const endMs = clockMs + 220;
+        clockMs += 260;
+        return { normWord, startMs, endMs, confidence: 0.94 };
+      });
+    });
+
+    // Simulate Whisper timestamps extending well past actual audioDurationMs on multiple trailing words
+    const audioDurationMs = clockMs - 450;
+    const aligned = alignStoryboardWithWhisperAnchors(
+      SAMPLE_DEMO_STORYBOARD,
+      anchors,
+      audioDurationMs,
+      30,
+    );
+
+    expect(aligned.alignmentMode).toBe('whisper');
+    for (let i = 0; i < aligned.captions.length; i++) {
+      const cur = aligned.captions[i]!;
+      expect(cur.startMs).toBeGreaterThanOrEqual(0);
+      expect(cur.endMs).toBeGreaterThan(cur.startMs);
+      expect(cur.endMs).toBeLessThanOrEqual(audioDurationMs);
+      expect(cur.timestampMs).toBe(cur.startMs);
+      if (i > 0) {
+        expect(cur.startMs).toBeGreaterThanOrEqual(aligned.captions[i - 1]!.endMs);
+      }
+    }
+  });
+
+  it('normalizes technical acronyms for TTS only and aligns both spoken & written Whisper tokens', () => {
+    expect(normalizeTextForTts("PyPI's kubectl and nginx run on WASM via FastAPI.")).toBe(
+      "Pie P I's kube control and engine X run on W A S M via Fast A P I.",
+    );
+
+    const sb = {
+      ...SAMPLE_DEMO_STORYBOARD,
+      scenes: [
+        {
+          ...SAMPLE_DEMO_STORYBOARD.scenes[0]!,
+          narration: 'PyPI serves wheels while kubectl manages pods on nginx nodes today.',
+        },
+        ...SAMPLE_DEMO_STORYBOARD.scenes.slice(1),
+      ],
+    };
+
+    const rawAnchorWords = [
+      'pie',
+      'p',
+      'i',
+      'serves',
+      'wheels',
+      'while',
+      'cube',
+      'control',
+      'manages',
+      'pods',
+      'on',
+      'engine',
+      'x',
+      'nodes',
+      'today',
+      ...SAMPLE_DEMO_STORYBOARD.scenes
+        .slice(1)
+        .flatMap((s) => s.narration.trim().split(/\s+/))
+        .flatMap((w) => {
+          const s = normalizeSpokenWord(w);
+          return s.length > 0 ? s : [w.toLowerCase()];
+        }),
+    ];
+
+    let clockMs = 220;
+    const anchors = rawAnchorWords.map((normWord) => {
+      const startMs = clockMs;
+      const endMs = clockMs + 180;
+      clockMs += 210;
+      return { normWord, startMs, endMs, confidence: 0.95 };
+    });
+
+    const res = alignStoryboardWithWhisperAnchors(sb, anchors, clockMs + 900, 30);
+    expect(res.alignmentMode).toBe('whisper');
+    // Display caption preserves original PyPI spelling and spans all 3 phonetic tokens ("pie p i")
+    expect(res.captions[0]!.text.trim()).toBe('PyPI');
+    expect(res.captions[0]!.startMs).toBe(220);
+    expect(res.captions[0]!.endMs).toBeGreaterThanOrEqual(800);
+    // Display caption preserves kubectl across "cube control"
+    expect(res.captions[4]!.text.trim()).toBe('kubectl');
+    // Display caption preserves nginx across "engine x"
+    expect(res.captions[8]!.text.trim()).toBe('nginx');
+  });
+
+  it('uses smooth 220ms head and 650ms tail pads in estimated mode and reserves pause gap before channel outro', () => {
+    const withoutOutro = {
+      ...SAMPLE_DEMO_STORYBOARD,
+      scenes: SAMPLE_DEMO_STORYBOARD.scenes.slice(0, 5),
+    };
+    const standard = alignStoryboardWithWhisperAnchors(withoutOutro, [], 30_000, 30);
+    expect(standard.alignmentMode).toBe('estimated');
+    expect(standard.sceneTimings).toHaveLength(5);
+    expect(standard.captions[0]!.startMs).toBe(220);
+    expect(standard.captions[standard.captions.length - 1]!.endMs).toBeLessThanOrEqual(29_350);
+
+    const legacyWithOutro = appendChannelOutroScene(SAMPLE_DEMO_STORYBOARD);
+    const res = alignStoryboardWithWhisperAnchors(legacyWithOutro, [], 38_000, 30);
     expect(res.alignmentMode).toBe('estimated');
-    expect(res.sceneTimings).toHaveLength(SAMPLE_DEMO_STORYBOARD.scenes.length);
+    expect(res.sceneTimings).toHaveLength(legacyWithOutro.scenes.length);
     expect(res.captions[res.captions.length - 1]!.endMs).toBeLessThanOrEqual(38_000);
+
+    const contentWordCount = legacyWithOutro.scenes
+      .slice(0, -1)
+      .flatMap((s) => s.narration.trim().split(/\s+/)).length;
+    const lastContentWord = res.captions[contentWordCount - 1]!;
+    const firstOutroWord = res.captions[contentWordCount]!;
+    const gapMs = firstOutroWord.startMs - lastContentWord.endMs;
+    expect(gapMs).toBeGreaterThanOrEqual(600);
+
+    const outroTiming = res.sceneTimings[res.sceneTimings.length - 1]!;
+    expect(outroTiming.startMs).toBeGreaterThan(lastContentWord.endMs);
+    expect(outroTiming.startMs).toBeLessThanOrEqual(firstOutroWord.startMs);
   });
 });

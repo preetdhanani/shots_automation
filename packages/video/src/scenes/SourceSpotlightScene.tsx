@@ -3,6 +3,7 @@ import { Img, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remot
 import { resolveLayout, type SourceSpotlightScene as SourceSpotlightData } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
 
 interface Props {
   scene: SourceSpotlightData;
@@ -10,7 +11,8 @@ interface Props {
 
 export const SourceSpotlightScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
+  const { durationInFrames } = useSceneRuntime();
   const { palette, fonts, assetUrls } = useReelStyle();
   const layout = resolveLayout('source_spotlight', scene.visual?.layout);
 

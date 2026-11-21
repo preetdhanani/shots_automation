@@ -7,6 +7,7 @@ import {
 } from '@post/core';
 import { KineticText } from '../components/KineticText.js';
 import { useReelStyle } from '../style/ReelStyleContext.js';
+import { useSceneRuntime } from '../style/SceneRuntimeContext.js';
 
 interface Props {
   scene: TakeawayData;
@@ -18,7 +19,9 @@ export const TakeawayCtaScene: React.FC<Props> = ({ scene, brandHandle }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { palette, fonts } = useReelStyle();
+  const { durationInFrames } = useSceneRuntime();
   const layout = resolveLayout('takeaway_cta', scene.visual?.layout);
+  const cleanHandle = brandHandle.trim();
 
   const mainSpring = spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
   const boxSpring = spring({
@@ -31,6 +34,12 @@ export const TakeawayCtaScene: React.FC<Props> = ({ scene, brandHandle }) => {
     fps,
     config: { damping: 14, stiffness: 145 },
   });
+  const ctaFocus = interpolate(
+    frame,
+    [Math.round(durationInFrames * 0.35), Math.max(24, Math.round(durationInFrames * 0.78))],
+    [0, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
 
   if (layout === 'centered') {
     return (
@@ -102,32 +111,40 @@ export const TakeawayCtaScene: React.FC<Props> = ({ scene, brandHandle }) => {
         <div
           style={{
             opacity: ctaSpring,
-            transform: `scale(${interpolate(ctaSpring, [0, 1], [0.9, 1])})`,
-            backgroundColor: palette.accent,
-            color: '#07080D',
-            borderRadius: 999,
-            padding: '22px 42px',
-            boxShadow: `0 0 36px ${palette.glow}`,
-            display: 'inline-flex',
+            transform: `translateY(${interpolate(ctaSpring, [0, 1], [14, 0])}px) scale(${1 + ctaFocus * 0.025})`,
+            width: '100%',
+            maxWidth: 760,
+            backgroundColor: 'rgba(12, 14, 22, 0.88)',
+            border: `1.5px solid ${palette.accentBorder}`,
+            borderTop: `3px solid ${palette.accent}`,
+            borderRadius: 14,
+            padding: '18px 28px',
+            boxShadow: ctaFocus > 0.2 ? `0 0 ${Math.round(14 + ctaFocus * 22)}px ${palette.glow}` : undefined,
+            display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
-            gap: 18,
+            gap: 10,
           }}
         >
-          <span style={{ fontFamily: fonts.display, fontSize: 30, fontWeight: 700 }}>
-            {scene.ctaText}
-          </span>
-          {brandHandle ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontFamily: fonts.mono, fontSize: 28, fontWeight: 700, color: palette.accent }}>
+              &gt;
+            </span>
+            <span style={{ fontFamily: fonts.mono, fontSize: 27, fontWeight: 700, color: '#FAFAFA' }}>
+              {scene.ctaText}
+            </span>
+          </div>
+          {cleanHandle ? (
             <span
               style={{
                 fontFamily: fonts.mono,
-                fontSize: 22,
-                fontWeight: 700,
-                backgroundColor: 'rgba(9, 9, 11, 0.16)',
-                padding: '6px 14px',
-                borderRadius: 999,
+                fontSize: 20,
+                fontWeight: 600,
+                color: '#A1A1AA',
+                letterSpacing: '0.04em',
               }}
             >
-              {brandHandle}
+              {cleanHandle}
             </span>
           ) : null}
         </div>
@@ -207,32 +224,37 @@ export const TakeawayCtaScene: React.FC<Props> = ({ scene, brandHandle }) => {
       <div
         style={{
           opacity: ctaSpring,
-          transform: `scale(${interpolate(ctaSpring, [0, 1], [0.95, 1])})`,
+          transform: `translateY(${interpolate(ctaSpring, [0, 1], [14, 0])}px) scale(${1 + ctaFocus * 0.02})`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 16,
-          backgroundColor: palette.accent,
-          color: '#09090B',
-          borderRadius: 20,
-          padding: '22px 28px',
+          borderLeft: `5px solid ${palette.accent}`,
+          backgroundColor: 'rgba(255, 255, 255, 0.035)',
+          borderRadius: '0 14px 14px 0',
+          padding: '18px 24px',
+          boxShadow: ctaFocus > 0.2 ? `0 0 ${Math.round(12 + ctaFocus * 20)}px ${palette.glow}` : undefined,
         }}
       >
-        <span style={{ fontFamily: fonts.display, fontSize: 28, fontWeight: 700 }}>
-          {scene.ctaText}
-        </span>
-        {brandHandle ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <span style={{ fontFamily: fonts.mono, fontSize: 26, fontWeight: 700, color: palette.accent }}>
+            &gt;
+          </span>
+          <span style={{ fontFamily: fonts.mono, fontSize: 26, fontWeight: 700, color: '#F4F4F5' }}>
+            {scene.ctaText}
+          </span>
+        </div>
+        {cleanHandle ? (
           <span
             style={{
               fontFamily: fonts.mono,
-              fontSize: 22,
-              fontWeight: 700,
-              backgroundColor: 'rgba(9, 9, 11, 0.14)',
-              padding: '6px 14px',
-              borderRadius: 10,
+              fontSize: 20,
+              fontWeight: 600,
+              color: '#A1A1AA',
+              flexShrink: 0,
             }}
           >
-            {brandHandle}
+            {cleanHandle}
           </span>
         ) : null}
       </div>

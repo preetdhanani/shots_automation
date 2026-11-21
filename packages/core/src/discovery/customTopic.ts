@@ -2,31 +2,13 @@ import { createHash } from 'node:crypto';
 import type { Store, TopicRecord } from '../db/store.js';
 import type { ContentPillar } from '../schemas/storyboard.js';
 import { classifyPillar, computeTopicFingerprint, hashCanonicalUrl } from './dedupe.js';
+import { extractArticleFactsFromHtml } from './fetcher.js';
 import { safeFetchText, type SafeFetchOptions } from './ssrf.js';
 
 export interface CustomTopicInput {
   prompt: string;
   url?: string;
   pillar?: ContentPillar;
-}
-
-function extractTitleAndExcerpt(htmlOrText: string, fallbackUrl: string): {
-  title: string;
-  excerpt: string;
-} {
-  const titleMatch = htmlOrText.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const rawTitle = titleMatch ? titleMatch[1]!.replace(/\s+/g, ' ').trim() : '';
-  const bodyClean = htmlOrText
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return {
-    title: rawTitle || new URL(fallbackUrl).hostname,
-    excerpt: bodyClean.slice(0, 1200),
-  };
 }
 
 export async function createCustomTopic(
@@ -46,7 +28,7 @@ export async function createCustomTopic(
     const res = await safeFetchText(urlTrimmed, fetchOpts);
     sourceUrl = res.url;
     sourceName = new URL(res.url).hostname.replace(/^www\./, '');
-    const extracted = extractTitleAndExcerpt(res.text, res.url);
+    const extracted = extractArticleFactsFromHtml(res.text, res.url, 2600);
     title = promptTrimmed ? promptTrimmed.slice(0, 110) : extracted.title.slice(0, 110);
     summary = promptTrimmed
       ? `${promptTrimmed}\n\nReference (${extracted.title}): ${extracted.excerpt}`
@@ -61,7 +43,7 @@ export async function createCustomTopic(
   return store.createTopic({
     pillar,
     title: title || 'Custom AI Developer Reel',
-    summary: summary.slice(0, 2000),
+    summary: summary.slice(0, 3200),
     sourceName,
     sourceUrl,
     canonicalUrlHash: urlHash,

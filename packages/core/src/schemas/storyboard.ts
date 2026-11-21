@@ -126,7 +126,7 @@ export const HookTitleSceneSchema = SceneBaseSchema.extend({
   badge: z.string().trim().min(2).max(28),
   headline: z.string().trim().min(4).max(70),
   subheadline: z.string().trim().min(4).max(110),
-  highlightStat: z.string().trim().max(32).optional(),
+  highlightStat: z.string().trim().max(48).optional(),
 });
 
 export const BenchmarkBarItemSchema = z.object({
@@ -356,11 +356,23 @@ export const ReelStoryboardSchema = z.object({
 
 export type ReelStoryboard = z.infer<typeof ReelStoryboardSchema>;
 
+export const CHANNEL_OUTRO_PAUSE_MS = 450;
+export const CHANNEL_OUTRO_TAIL_PAD_MS = 650;
+export const CHANNEL_OUTRO_ESTIMATED_GAP_MS = 680;
+
 export const CHANNEL_OUTRO_NARRATION =
-  'AI news, new models, benchmarks, harnesses, clean AI coding, and vibe coding tips from top devs. Follow this channel.';
+  'AI news, benchmarks, and coding tips. Follow this channel for more.';
+
+const LEGACY_CHANNEL_OUTRO_NARRATIONS = new Set([
+  CHANNEL_OUTRO_NARRATION,
+  'AI news, new models, benchmarks, harnesses, clean AI coding, and vibe coding tips from top devs. Follow this channel.',
+]);
 
 export function isChannelOutroScene(scene: ReelScene): boolean {
-  return scene.type === 'takeaway_cta' && scene.narration.trim() === CHANNEL_OUTRO_NARRATION;
+  return (
+    scene.type === 'takeaway_cta' &&
+    LEGACY_CHANNEL_OUTRO_NARRATIONS.has(scene.narration.trim())
+  );
 }
 
 export function createChannelOutroScene(id = 'scene-6'): TakeawayCtaScene {
@@ -369,16 +381,15 @@ export function createChannelOutroScene(id = 'scene-6'): TakeawayCtaScene {
     type: 'takeaway_cta',
     badge: 'FOLLOW FOR MORE',
     headline: 'Stay Ahead in AI Coding',
-    takeaway:
-      'AI news · New models · Benchmarks · Harnesses · Clean AI coding & vibe coding tips from top devs',
-    ctaText: 'Follow this channel',
+    takeaway: 'AI news · New models · Benchmarks · Harnesses · Coding tips',
+    ctaText: 'Follow this channel for more',
     narration: CHANNEL_OUTRO_NARRATION,
   };
 }
 
 export function appendChannelOutroScene(storyboard: ReelStoryboard): ReelStoryboard {
   const lastScene = storyboard.scenes[storyboard.scenes.length - 1];
-  if (lastScene && lastScene.narration.trim() === CHANNEL_OUTRO_NARRATION) {
+  if (lastScene && isChannelOutroScene(lastScene)) {
     return storyboard;
   }
 
@@ -403,6 +414,111 @@ export interface EditorialCheckResult {
 
 export interface EditorialValidationOptions {
   allowAiMediaClip?: boolean;
+  brandHandle?: string;
+  rejectDefaultBrandLeak?: boolean;
+}
+
+const HASHTAG_TYPO_FIXES: Record<string, string> = {
+  googlendeepmind: 'googledeepmind',
+  google_deepmind: 'googledeepmind',
+  javasript: 'javascript',
+  typesript: 'typescript',
+  pyhton: 'python',
+  machinlearning: 'machinelearning',
+  artificalintelligence: 'artificialintelligence',
+  developement: 'development',
+};
+
+export function sanitizeHashtags(
+  hashtags: readonly string[],
+  opts: { maxTags?: number } = {},
+): string[] {
+  const normalizedTags: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of hashtags) {
+    let token = raw.trim().replace(/^#+/, '').toLowerCase();
+    token = token
+      .replace(/c\+\+/g, 'cpp')
+      .replace(/c#/g, 'csharp')
+      .replace(/\.net\b/g, 'dotnet')
+      .replace(/node\.js/g, 'nodejs')
+      .replace(/next\.js/g, 'nextjs')
+      .replace(/\s+/g, '')
+      .replace(/[^a-z0-9_]/g, '');
+    if (!token) continue;
+    token = HASHTAG_TYPO_FIXES[token] ?? token;
+    if (token.length < 2 || token.length > 30) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    normalizedTags.push(`#${token}`);
+    if (opts.maxTags !== undefined && normalizedTags.length >= opts.maxTags) {
+      break;
+    }
+  }
+  return normalizedTags;
+}
+
+const CODE_SYNTAX_PUNCT_RE = /[{}[\]();=<>|&$:]|=>|->|::|--[a-z0-9]|\.\.?\/|~\/|["'`]/i;
+const CODE_DOT_MEMBER_RE = /[a-z0-9_]\.[a-z0-9_]/i;
+const CODE_IDENT_STYLE_RE = /[a-z][A-Z]|[a-z0-9]_[a-z0-9]|[a-z]+-[a-z]+/;
+const CODE_LEADING_KW_RE =
+  /^(?:npm|npx|pnpm|yarn|bun|git|gh|docker|kubectl|vercel|curl|wget|python3?|pip3?|uv|node|tsx|tsc|vitest|jest|pytest|cargo|rustc|go|make|cmake|ollama|ffmpeg|ffprobe|brew|apt|sh|bash|zsh|jq|grep|rg|awk|sed|cat|ls|cd|mkdir|rm|cp|mv|chmod|export|import|from|const|let|var|function|async|await|return|def|class|fn|pub|struct|enum|impl|match|select|insert|update|delete|create|alter|drop|run|copy|cmd|env|arg|if|else|for|while|try|catch|throw)\b/i;
+
+export function looksLikeFakeCodeProse(
+  code: string,
+  opts: { allowCommentOnly?: boolean } = {},
+): boolean {
+  const rawLines = code
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  if (rawLines.length === 0) return true;
+
+  const nonCommentLines = rawLines.filter(
+    (line) =>
+      !(
+        line.startsWith('//') ||
+        line.startsWith('#') ||
+        line.startsWith('--') ||
+        line.startsWith('/*') ||
+        line.startsWith('*')
+      ),
+  );
+
+  if (nonCommentLines.length === 0) {
+    return !opts.allowCommentOnly;
+  }
+
+  let syntaxLines = 0;
+  let proseLines = 0;
+
+  for (const line of nonCommentLines) {
+    const cleanLine = line.replace(/^[+-]\s*/, '');
+    const hasSyntax =
+      CODE_SYNTAX_PUNCT_RE.test(cleanLine) ||
+      CODE_DOT_MEMBER_RE.test(cleanLine) ||
+      CODE_IDENT_STYLE_RE.test(cleanLine) ||
+      CODE_LEADING_KW_RE.test(cleanLine);
+
+    if (hasSyntax) {
+      syntaxLines++;
+      continue;
+    }
+
+    const words = cleanLine.split(/\s+/).filter(Boolean);
+    const mostlyAlphaWords = words.filter((w) => /^[a-z.,!?'-]+$/i.test(w));
+    if (words.length >= 3 && mostlyAlphaWords.length >= 3) {
+      proseLines++;
+    } else if (words.length <= 2 && /^[a-z0-9_-]+$/i.test(cleanLine)) {
+      // Single CLI binary / token line
+      syntaxLines++;
+    }
+  }
+
+  if (syntaxLines === 0) return true;
+  return proseLines / nonCommentLines.length >= 0.5;
 }
 
 export function countWords(text: string): number {
@@ -412,22 +528,18 @@ export function countWords(text: string): number {
 }
 
 export function assembleInstagramCaption(caption: string, hashtags: string[]): string {
-  const normalizedTags: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of hashtags) {
-    const clean = raw.trim().replace(/^#+/, '').replace(/\s+/g, '');
-    if (!clean) continue;
-    const lower = clean.toLowerCase();
-    if (seen.has(lower)) continue;
-    seen.add(lower);
-    normalizedTags.push(`#${clean}`);
-  }
+  const normalizedTags = sanitizeHashtags(hashtags);
   const cleanCaption = caption.trim();
   if (normalizedTags.length === 0) return cleanCaption;
   return `${cleanCaption}\n\n${normalizedTags.join(' ')}`;
 }
 
-function validateCodeBlock(code: string, label: string, errors: string[]): void {
+function validateCodeBlock(
+  code: string,
+  label: string,
+  errors: string[],
+  opts: { allowCommentOnly?: boolean } = {},
+): number {
   const lines = code.replace(/\r\n/g, '\n').split('\n');
   if (lines.length > 12) {
     errors.push(`${label} has ${lines.length} lines; max 12 lines allowed for 9:16 readability.`);
@@ -439,6 +551,12 @@ function validateCodeBlock(code: string, label: string, errors: string[]): void 
       );
     }
   });
+  if (looksLikeFakeCodeProse(code, opts)) {
+    errors.push(
+      `${label} looks like plain English prose instead of real code or CLI commands. Write real syntax, config, or shell commands.`,
+    );
+  }
+  return lines.length;
 }
 
 export function validateStoryboardEditorial(
@@ -447,13 +565,23 @@ export function validateStoryboardEditorial(
 ): EditorialCheckResult {
   const errors: string[] = [];
   let totalWords = 0;
+  let contentWords = 0;
   let aiMediaClipCount = 0;
+
+  if (storyboard.scenes.length > 8) {
+    errors.push(
+      `Storyboard has ${storyboard.scenes.length} scenes; max 8 scenes allowed.`,
+    );
+  }
 
   storyboard.scenes.forEach((scene, index) => {
     const sceneLabel = `Scene ${index + 1} (${scene.type})`;
 
     const words = countWords(scene.narration);
     totalWords += words;
+    if (!isChannelOutroScene(scene)) {
+      contentWords += words;
+    }
     if (words < 6) {
       errors.push(`${sceneLabel} narration has ${words} words; at least 6 words required.`);
     }
@@ -468,12 +596,21 @@ export function validateStoryboardEditorial(
     }
 
     if (scene.type === 'code_compare') {
-      validateCodeBlock(scene.afterCode, `${sceneLabel} afterCode`, errors);
+      const afterCount = validateCodeBlock(scene.afterCode, `${sceneLabel} afterCode`, errors, {
+        allowCommentOnly: false,
+      });
       if (scene.mode === 'before_after') {
         if (!scene.beforeCode || scene.beforeCode.trim().length === 0) {
           errors.push(`${sceneLabel} mode is before_after but beforeCode is empty.`);
         } else {
-          validateCodeBlock(scene.beforeCode, `${sceneLabel} beforeCode`, errors);
+          const beforeCount = validateCodeBlock(scene.beforeCode, `${sceneLabel} beforeCode`, errors, {
+            allowCommentOnly: true,
+          });
+          if (beforeCount + afterCount > 18) {
+            errors.push(
+              `${sceneLabel} combined beforeCode + afterCode has ${beforeCount + afterCount} lines; max 18 combined lines allowed.`,
+            );
+          }
         }
       }
     }
@@ -498,10 +635,33 @@ export function validateStoryboardEditorial(
     }
   });
 
-  if (totalWords < 70 || totalWords > 200) {
+  if (contentWords < 40) {
     errors.push(
-      `Total spoken narration is ${totalWords} words; must be between 70 and 200 words (30-75s).`,
+      `Content spoken narration is ${contentWords} words; at least 40 words required.`,
     );
+  }
+  if (totalWords > 175) {
+    errors.push(
+      `Total spoken narration is ${totalWords} words; max 175 words allowed (~65s).`,
+    );
+  }
+
+  if (options.rejectDefaultBrandLeak && options.brandHandle?.trim().toLowerCase() !== '@ai.dev.reels') {
+    const leakRe = /@ai\.dev\.reels/i;
+    const leakedInCaption = leakRe.test(storyboard.caption);
+    const leakedInScene = storyboard.scenes.some(
+      (s) => leakRe.test(s.narration) || (s.type === 'takeaway_cta' && leakRe.test(s.ctaText)),
+    );
+    if (leakedInCaption || leakedInScene) {
+      errors.push(
+        'Leaked default handle "@ai.dev.reels" in caption, narration, or CTA. Omit handles unless specifically configured.',
+      );
+    }
+  }
+
+  const sanitizedTags = sanitizeHashtags(storyboard.hashtags);
+  if (sanitizedTags.length < 3) {
+    errors.push(`Hashtags produced only ${sanitizedTags.length} valid tag(s); at least 3 valid hashtags required.`);
   }
 
   for (const src of storyboard.sources) {

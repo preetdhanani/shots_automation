@@ -157,6 +157,9 @@ export const FONT_FAMILIES = {
   mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
 } as const;
 
+/** Fixed heavy geometric sans for burnt-in captions across all reel typographies. */
+export const CAPTION_FONT_FAMILY = "'Inter', 'Space Grotesk', system-ui, sans-serif";
+
 export interface TypographyPreset {
   display: string;
   sans: string;

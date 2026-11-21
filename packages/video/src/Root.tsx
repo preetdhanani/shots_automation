@@ -38,7 +38,7 @@ function buildStudioPropsForStoryboard(storyboard: ReelStoryboard): ReelComposit
   });
 
   return {
-    brandHandle: '@ai.dev.reels',
+    brandHandle: '',
     fps: VIDEO_FPS,
     audioDurationMs: storyboard.scenes.length * msPerScene,
     captions,

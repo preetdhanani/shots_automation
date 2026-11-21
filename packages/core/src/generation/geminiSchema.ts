@@ -3,10 +3,12 @@ import {
   CONTENT_PILLARS,
   HookStyleIdSchema,
   ReelStoryboardSchema,
+  sanitizeHashtags,
   type ReelScene,
   type ReelStoryboard,
   type SceneVisual,
 } from '../schemas/storyboard.js';
+import { repairSceneEmphasis } from '../variety/emphasis.js';
 import {
   CAMERA_MOVE_IDS,
   SCENE_TYPES,
@@ -710,6 +712,28 @@ function clampString(val: string | undefined, max: number): string | undefined {
   return trimmed.slice(0, max).replace(/\s+\S*$/, '').trim() || trimmed.slice(0, max);
 }
 
+function normalizeNarrationDashes(text: string): string {
+  return text
+    .replace(/\s*[\u2014\u2013]+\s*/g, ', ')
+    .replace(/([,;:.?!])\s*,\s*/g, '$1 ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function finalizeConvertedScene(scene: ReelScene): ReelScene {
+  const repairedEmphasis = repairSceneEmphasis(scene);
+  if (!repairedEmphasis) {
+    return scene;
+  }
+  return {
+    ...scene,
+    visual: {
+      ...(scene.visual ?? {}),
+      emphasis: repairedEmphasis,
+    },
+  };
+}
+
 export function convertFlatGeminiResponseToStoryboard(
   rawJson: unknown,
   sources: Array<{ title: string; url: string }>,
@@ -722,88 +746,88 @@ export function convertFlatGeminiResponseToStoryboard(
     const visual = sanitizeSceneVisual(s.type, s.visual);
     const base = {
       id,
-      narration: s.narration,
+      narration: normalizeNarrationDashes(s.narration),
       ...(visual ? { visual } : {}),
     };
 
     switch (s.type) {
       case 'hook_title': {
         if (!s.hookTitle) throw new Error(`Scene ${id} missing hookTitle payload`);
-        return {
+        return finalizeConvertedScene({
           ...base,
           type: 'hook_title',
           ...s.hookTitle,
-          highlightStat: clampString(s.hookTitle.highlightStat, 32),
-        };
+          highlightStat: clampString(s.hookTitle.highlightStat, 48),
+        });
       }
       case 'benchmark_bars': {
         if (!s.benchmarkBars) throw new Error(`Scene ${id} missing benchmarkBars payload`);
-        return { ...base, type: 'benchmark_bars', ...s.benchmarkBars };
+        return finalizeConvertedScene({ ...base, type: 'benchmark_bars', ...s.benchmarkBars });
       }
       case 'code_compare': {
         if (!s.codeCompare) throw new Error(`Scene ${id} missing codeCompare payload`);
         const hasBefore = Boolean(s.codeCompare.beforeCode?.trim());
         const mode =
           s.codeCompare.mode === 'before_after' && !hasBefore ? 'single' : s.codeCompare.mode;
-        return {
+        return finalizeConvertedScene({
           ...base,
           type: 'code_compare',
           ...s.codeCompare,
           mode,
           beforeCode: hasBefore ? s.codeCompare.beforeCode : undefined,
-        };
+        });
       }
       case 'terminal_demo': {
         if (!s.terminalDemo) throw new Error(`Scene ${id} missing terminalDemo payload`);
-        return { ...base, type: 'terminal_demo', ...s.terminalDemo };
+        return finalizeConvertedScene({ ...base, type: 'terminal_demo', ...s.terminalDemo });
       }
       case 'news_quote_card': {
         if (!s.newsQuoteCard) throw new Error(`Scene ${id} missing newsQuoteCard payload`);
-        return { ...base, type: 'news_quote_card', ...s.newsQuoteCard };
+        return finalizeConvertedScene({ ...base, type: 'news_quote_card', ...s.newsQuoteCard });
       }
       case 'takeaway_cta': {
         if (!s.takeawayCta) throw new Error(`Scene ${id} missing takeawayCta payload`);
-        return { ...base, type: 'takeaway_cta', ...s.takeawayCta };
+        return finalizeConvertedScene({ ...base, type: 'takeaway_cta', ...s.takeawayCta });
       }
       case 'big_stat': {
         if (!s.bigStat) throw new Error(`Scene ${id} missing bigStat payload`);
-        return { ...base, type: 'big_stat', ...s.bigStat };
+        return finalizeConvertedScene({ ...base, type: 'big_stat', ...s.bigStat });
       }
       case 'versus_split': {
         if (!s.versusSplit) throw new Error(`Scene ${id} missing versusSplit payload`);
-        return { ...base, type: 'versus_split', ...s.versusSplit };
+        return finalizeConvertedScene({ ...base, type: 'versus_split', ...s.versusSplit });
       }
       case 'checklist_steps': {
         if (!s.checklistSteps) throw new Error(`Scene ${id} missing checklistSteps payload`);
-        return { ...base, type: 'checklist_steps', ...s.checklistSteps };
+        return finalizeConvertedScene({ ...base, type: 'checklist_steps', ...s.checklistSteps });
       }
       case 'timeline': {
         if (!s.timeline) throw new Error(`Scene ${id} missing timeline payload`);
-        return { ...base, type: 'timeline', ...s.timeline };
+        return finalizeConvertedScene({ ...base, type: 'timeline', ...s.timeline });
       }
       case 'social_post': {
         if (!s.socialPost) throw new Error(`Scene ${id} missing socialPost payload`);
-        return { ...base, type: 'social_post', ...s.socialPost };
+        return finalizeConvertedScene({ ...base, type: 'social_post', ...s.socialPost });
       }
       case 'line_chart': {
         if (!s.lineChart) throw new Error(`Scene ${id} missing lineChart payload`);
-        return { ...base, type: 'line_chart', ...s.lineChart };
+        return finalizeConvertedScene({ ...base, type: 'line_chart', ...s.lineChart });
       }
       case 'countdown_item': {
         if (!s.countdownItem) throw new Error(`Scene ${id} missing countdownItem payload`);
-        return { ...base, type: 'countdown_item', ...s.countdownItem };
+        return finalizeConvertedScene({ ...base, type: 'countdown_item', ...s.countdownItem });
       }
       case 'myth_fact': {
         if (!s.mythFact) throw new Error(`Scene ${id} missing mythFact payload`);
-        return { ...base, type: 'myth_fact', ...s.mythFact };
+        return finalizeConvertedScene({ ...base, type: 'myth_fact', ...s.mythFact });
       }
       case 'source_spotlight': {
         if (!s.sourceSpotlight) throw new Error(`Scene ${id} missing sourceSpotlight payload`);
-        return { ...base, type: 'source_spotlight', ...s.sourceSpotlight };
+        return finalizeConvertedScene({ ...base, type: 'source_spotlight', ...s.sourceSpotlight });
       }
       case 'ai_media_clip': {
         if (!s.aiMediaClip) throw new Error(`Scene ${id} missing aiMediaClip payload`);
-        return { ...base, type: 'ai_media_clip', ...s.aiMediaClip };
+        return finalizeConvertedScene({ ...base, type: 'ai_media_clip', ...s.aiMediaClip });
       }
     }
   });
@@ -812,12 +836,15 @@ export function convertFlatGeminiResponseToStoryboard(
     ? HookStyleIdSchema.safeParse(flat.hookStyle).data
     : undefined;
 
+  const cleanedTags = sanitizeHashtags(flat.hashtags, { maxTags: 5 });
+  const hashtags = cleanedTags.length >= 3 ? cleanedTags : flat.hashtags;
+
   return ReelStoryboardSchema.parse({
     title: flat.title,
     pillar: flat.pillar,
     ...(parsedHookStyle ? { hookStyle: parsedHookStyle } : {}),
-    caption: flat.caption,
-    hashtags: flat.hashtags,
+    caption: flat.caption.replace(/\s*[\u2014\u2013]+\s*/g, ' - ').trim(),
+    hashtags,
     sources,
     scenes,
   });

@@ -36,7 +36,12 @@ export interface SocialPublisher {
   checkHealth(): Promise<MetaHealthStatus>;
   publish(
     reel: ReelRecord,
-    opts?: { dryRun?: boolean; onProgress?: PublishProgressFn; signal?: AbortSignal },
+    opts?: {
+      dryRun?: boolean;
+      bypassSpacing?: boolean;
+      onProgress?: PublishProgressFn;
+      signal?: AbortSignal;
+    },
   ): Promise<PublishResult>;
   reconcile(
     reel: ReelRecord,

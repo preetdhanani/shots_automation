@@ -3,14 +3,14 @@ import { ensureMusicAndSfxLibrary, resolveMusicTrackForMood } from './musicLibra
 
 export function ensureGeneratedAudioAssets(
   musicDir: string,
-  opts: { mood?: MusicMoodId; seed?: number } = {},
+  opts: { mood?: MusicMoodId; seed?: number; sfxDir?: string } = {},
 ): {
   ambientPadPath: string;
   transitionClickPath: string;
   moods: Record<MusicMoodId, string>;
   sfx: Record<SfxId, string>;
 } {
-  const lib = ensureMusicAndSfxLibrary(musicDir);
+  const lib = ensureMusicAndSfxLibrary(musicDir, opts.sfxDir);
   const mood = opts.mood ?? 'dark_pad';
   const chosenMusic = resolveMusicTrackForMood(musicDir, mood, opts.seed ?? 0);
 

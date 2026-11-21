@@ -1,8 +1,11 @@
 import type {
   ContentPillar,
+  FeedCleanInterval,
+  FeedCleanIntervalCounts,
   FreshnessReport,
   LlmEndpointPublicDto,
   LlmProvider,
+  PublishSpacingStatus,
   ReelFingerprint,
   ReelStoryboard,
   SceneTiming,
@@ -28,6 +31,19 @@ export interface TopicDto {
   score: number;
   status: TopicStatus;
   createdAt: string;
+}
+
+export interface FeedCleanPreviewDto {
+  totalNew: number;
+  intervals: Record<FeedCleanInterval, FeedCleanIntervalCounts>;
+}
+
+export interface FeedCleanResultDto {
+  interval: FeedCleanInterval;
+  cutoffIso: string;
+  removedCount: number;
+  keptCount: number;
+  removedIds: string[];
 }
 
 export interface ReelStaleness {
@@ -106,6 +122,7 @@ export interface AppSettingsDto {
   brandHandle: string;
   musicEnabled: boolean;
   musicVolumeDb: number;
+  minPublishSpacingHours: number;
   activeLlmEndpointId: string | null;
   aiBrollEnabled: boolean;
   voiceRotation: boolean;
@@ -208,6 +225,7 @@ export interface ReelDetailDto {
   latestRun: PipelineRunDto | null;
   staleness: ReelStaleness;
   variety?: ReelVarietyDto;
+  publishSpacing?: PublishSpacingStatus;
 }
 
 export interface PublishResultDto {
