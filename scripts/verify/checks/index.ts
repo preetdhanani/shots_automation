@@ -4,6 +4,8 @@ import { checkSettingsAndLlm } from './03-settings-and-llm.js';
 import { checkRunsAndLivePipeline } from './04-runs-and-live-pipeline.js';
 import { checkApprovalStudioAndPublish } from './05-approval-studio-and-publish.js';
 import { checkLibrary } from './06-library.js';
+import { checkVideoVariety } from './07-video-variety.js';
+import { checkRemotionVisualVariety } from './08-remotion-visual-variety.js';
 import type { VerifyCheck } from './types.js';
 
 export const ALL_VERIFY_CHECKS: readonly VerifyCheck[] = [
@@ -13,4 +15,6 @@ export const ALL_VERIFY_CHECKS: readonly VerifyCheck[] = [
   checkRunsAndLivePipeline,
   checkApprovalStudioAndPublish,
   checkLibrary,
+  checkVideoVariety,
+  checkRemotionVisualVariety,
 ];

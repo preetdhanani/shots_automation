@@ -1,7 +1,12 @@
 import React from 'react';
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import type { ContentPillar, TerminalDemoScene as TerminalData } from '@post/core';
-import { FONT_FAMILIES, PILLAR_THEMES } from '../theme.js';
+import {
+  resolveLayout,
+  type ContentPillar,
+  type TerminalDemoScene as TerminalData,
+} from '@post/core';
+import { KineticText } from '../components/KineticText.js';
+import { useReelStyle } from '../style/ReelStyleContext.js';
 
 interface Props {
   scene: TerminalData;
@@ -15,10 +20,11 @@ const TONE_COLORS = {
   accent: '#38BDF8',
 } as const;
 
-export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
+export const TerminalDemoScene: React.FC<Props> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const theme = PILLAR_THEMES[pillar];
+  const { palette, fonts } = useReelStyle();
+  const layout = resolveLayout('terminal_demo', scene.visual?.layout);
 
   const cardSpring = spring({ frame, fps, config: { damping: 16, stiffness: 140 } });
   const typeFrames = Math.min(28, Math.max(12, Math.round(scene.command.length * 0.5)));
@@ -32,6 +38,106 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
   const doneTyping = typedCount >= scene.command.length;
   const showCursor = !doneTyping || frame % 20 < 11;
 
+  if (layout === 'retro_fullscreen') {
+    return (
+      <div
+        style={{
+          opacity: cardSpring,
+          backgroundColor: '#05080D',
+          border: `2px solid ${palette.accentBorder}`,
+          borderRadius: 18,
+          padding: '32px 30px',
+          boxShadow: `0 0 44px ${palette.glow}, inset 0 0 36px rgba(0,0,0,0.85)`,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 24,
+          fontFamily: fonts.mono,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: `1px solid ${palette.accentBorder}`,
+            paddingBottom: 14,
+            fontSize: 19,
+            color: palette.accent,
+          }}
+        >
+          <span>TTY // {scene.windowTitle.toUpperCase()}</span>
+          <span>LIVE SHELL</span>
+        </div>
+
+        <h2
+          style={{
+            margin: 0,
+            fontFamily: fonts.display,
+            fontSize: Math.round(42 * fonts.headlineScale),
+            fontWeight: 700,
+            lineHeight: 1.12,
+            textTransform: fonts.headlineTransform,
+            color: '#FFFFFF',
+          }}
+        >
+          <KineticText text={scene.title} emphasis={scene.visual?.emphasis} />
+        </h2>
+
+        <div
+          style={{
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            border: `1px solid ${palette.accentBorder}`,
+            borderRadius: 12,
+            padding: '18px 20px',
+            fontSize: 29,
+            color: palette.accent,
+            textShadow: `0 0 14px ${palette.glow}`,
+          }}
+        >
+          &gt; {typedCommand}
+          {showCursor ? (
+            <span
+              style={{
+                display: 'inline-block',
+                width: 14,
+                height: 30,
+                backgroundColor: palette.accent,
+                marginLeft: 8,
+                verticalAlign: 'middle',
+              }}
+            />
+          ) : null}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {scene.outputLines.map((line, idx) => {
+            const lineStart = 10 + typeFrames + idx * 5;
+            const lineSpring = spring({
+              frame: Math.max(0, frame - lineStart),
+              fps,
+              config: { damping: 18, stiffness: 150 },
+            });
+            const color = line.tone === 'accent' ? palette.accent : TONE_COLORS[line.tone];
+            return (
+              <div
+                key={idx}
+                style={{
+                  opacity: lineSpring,
+                  fontSize: 25,
+                  lineHeight: 1.4,
+                  color,
+                }}
+              >
+                {line.text}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Default: 'window'
   return (
     <div
       style={{
@@ -45,10 +151,10 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span
           style={{
-            fontFamily: FONT_FAMILIES.mono,
+            fontFamily: fonts.mono,
             fontSize: 20,
             fontWeight: 600,
-            color: theme.accent,
+            color: palette.accent,
             letterSpacing: '0.07em',
             textTransform: 'uppercase',
           }}
@@ -58,25 +164,25 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
         <h2
           style={{
             margin: 0,
-            fontFamily: FONT_FAMILIES.display,
-            fontSize: 44,
+            fontFamily: fonts.display,
+            fontSize: Math.round(44 * fonts.headlineScale),
             fontWeight: 700,
             lineHeight: 1.14,
+            textTransform: fonts.headlineTransform,
             color: '#FAFAFA',
           }}
         >
-          {scene.title}
+          <KineticText text={scene.title} emphasis={scene.visual?.emphasis} />
         </h2>
       </div>
 
-      {/* Terminal Card */}
       <div
         style={{
           backgroundColor: '#0B0D13',
-          border: `1.5px solid ${theme.accentBorder}`,
+          border: `1.5px solid ${palette.accentBorder}`,
           borderRadius: 24,
           overflow: 'hidden',
-          boxShadow: `0 24px 64px rgba(0, 0, 0, 0.65), 0 0 36px ${theme.glow}`,
+          boxShadow: `0 24px 64px rgba(0, 0, 0, 0.65), 0 0 36px ${palette.glow}`,
         }}
       >
         <div
@@ -95,7 +201,7 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
           <span
             style={{
               marginLeft: 12,
-              fontFamily: FONT_FAMILIES.mono,
+              fontFamily: fonts.mono,
               fontSize: 20,
               color: '#A1A1AA',
             }}
@@ -110,10 +216,9 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
             display: 'flex',
             flexDirection: 'column',
             gap: 20,
-            fontFamily: FONT_FAMILIES.mono,
+            fontFamily: fonts.mono,
           }}
         >
-          {/* Command prompt line */}
           <div
             style={{
               display: 'flex',
@@ -124,7 +229,7 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
               color: '#FFFFFF',
             }}
           >
-            <span style={{ color: theme.accent, fontWeight: 700 }}>$</span>
+            <span style={{ color: palette.accent, fontWeight: 700 }}>$</span>
             <span style={{ wordBreak: 'break-word' }}>
               {typedCommand}
               {showCursor ? (
@@ -133,7 +238,7 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
                     display: 'inline-block',
                     width: 12,
                     height: 28,
-                    backgroundColor: theme.accent,
+                    backgroundColor: palette.accent,
                     marginLeft: 8,
                     borderRadius: 2,
                     verticalAlign: 'middle',
@@ -143,7 +248,6 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
             </span>
           </div>
 
-          {/* Output lines */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 6 }}>
             {scene.outputLines.map((line, idx) => {
               const lineStart = 12 + typeFrames + idx * 6;
@@ -152,6 +256,7 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
                 fps,
                 config: { damping: 18, stiffness: 150 },
               });
+              const color = line.tone === 'accent' ? palette.accent : TONE_COLORS[line.tone];
               return (
                 <div
                   key={idx}
@@ -160,11 +265,11 @@ export const TerminalDemoScene: React.FC<Props> = ({ scene, pillar }) => {
                     transform: `translateX(${interpolate(lineSpring, [0, 1], [16, 0])}px)`,
                     fontSize: 24,
                     lineHeight: 1.42,
-                    color: line.tone === 'accent' ? theme.accent : TONE_COLORS[line.tone],
+                    color,
                     backgroundColor: 'rgba(255, 255, 255, 0.03)',
                     padding: '10px 14px',
                     borderRadius: 10,
-                    borderLeft: `3px solid ${line.tone === 'accent' ? theme.accent : TONE_COLORS[line.tone]}`,
+                    borderLeft: `3px solid ${color}`,
                   }}
                 >
                   {line.text}

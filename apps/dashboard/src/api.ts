@@ -1,7 +1,9 @@
 import type {
   ContentPillar,
+  FreshnessReport,
   LlmEndpointPublicDto,
   LlmProvider,
+  ReelFingerprint,
   ReelStoryboard,
   SceneTiming,
   VideoSpecReport,
@@ -105,6 +107,8 @@ export interface AppSettingsDto {
   musicEnabled: boolean;
   musicVolumeDb: number;
   activeLlmEndpointId: string | null;
+  aiBrollEnabled: boolean;
+  voiceRotation: boolean;
 }
 
 export type LlmEndpointDto = LlmEndpointPublicDto;
@@ -190,6 +194,11 @@ export interface MetaCheckDto {
   message: string;
 }
 
+export interface ReelVarietyDto {
+  fingerprint: ReelFingerprint;
+  freshness: FreshnessReport;
+}
+
 export interface ReelDetailDto {
   reel: ReelDto;
   topic: TopicDto | null;
@@ -198,6 +207,7 @@ export interface ReelDetailDto {
   activeRun: PipelineRunDto | null;
   latestRun: PipelineRunDto | null;
   staleness: ReelStaleness;
+  variety?: ReelVarietyDto;
 }
 
 export interface PublishResultDto {

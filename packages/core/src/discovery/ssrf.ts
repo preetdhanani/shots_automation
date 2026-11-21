@@ -6,6 +6,7 @@ export interface SafeFetchOptions {
   maxBytes?: number;
   maxRedirects?: number;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
   fetchImpl?: typeof fetch;
   lookupImpl?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 }
@@ -122,7 +123,10 @@ export async function assertSafePublicUrl(
   return url;
 }
 
-async function readResponseWithByteLimit(response: Response, maxBytes: number): Promise<string> {
+async function readResponseBytesWithLimit(
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array> {
   const contentLengthHeader = response.headers.get('content-length');
   if (contentLengthHeader) {
     const len = Number.parseInt(contentLengthHeader, 10);
@@ -132,7 +136,7 @@ async function readResponseWithByteLimit(response: Response, maxBytes: number): 
   }
 
   if (!response.body) {
-    return '';
+    return new Uint8Array(0);
   }
 
   const reader = response.body.getReader();
@@ -158,13 +162,13 @@ async function readResponseWithByteLimit(response: Response, maxBytes: number): 
     merged.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(merged);
+  return merged;
 }
 
-export async function safeFetchText(
+export async function safeFetchBuffer(
   rawUrl: string,
   options: SafeFetchOptions = {},
-): Promise<{ url: string; status: number; contentType: string; text: string }> {
+): Promise<{ url: string; status: number; contentType: string; buffer: Buffer }> {
   const timeoutMs = options.timeoutMs ?? 10_000;
   const maxBytes = options.maxBytes ?? 2 * 1024 * 1024;
   const maxRedirects = options.maxRedirects ?? 3;
@@ -173,11 +177,16 @@ export async function safeFetchText(
   let currentUrl = (await assertSafePublicUrl(rawUrl, options.lookupImpl)).toString();
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
+    if (options.signal?.aborted) {
+      throw new Error('Aborted');
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let response: Response;
+    const onParentAbort = () => controller.abort();
+    options.signal?.addEventListener('abort', onParentAbort, { once: true });
+
     try {
-      response = await fetchFn(currentUrl, {
+      const response = await fetchFn(currentUrl, {
         method: 'GET',
         redirect: 'manual',
         signal: controller.signal,
@@ -187,35 +196,49 @@ export async function safeFetchText(
           ...options.headers,
         },
       });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          throw new Error(`Redirect (${response.status}) missing Location header.`);
+        }
+        if (hop === maxRedirects) {
+          throw new Error(`Exceeded max redirects (${maxRedirects}) fetching ${rawUrl}.`);
+        }
+        const resolvedNext = new URL(location, currentUrl).toString();
+        currentUrl = (await assertSafePublicUrl(resolvedNext, options.lookupImpl)).toString();
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} fetching ${currentUrl}`);
+      }
+
+      const bytes = await readResponseBytesWithLimit(response, maxBytes);
+      return {
+        url: currentUrl,
+        status: response.status,
+        contentType: response.headers.get('content-type') ?? '',
+        buffer: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      };
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onParentAbort);
     }
-
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      if (!location) {
-        throw new Error(`Redirect (${response.status}) missing Location header.`);
-      }
-      if (hop === maxRedirects) {
-        throw new Error(`Exceeded max redirects (${maxRedirects}) fetching ${rawUrl}.`);
-      }
-      const resolvedNext = new URL(location, currentUrl).toString();
-      currentUrl = (await assertSafePublicUrl(resolvedNext, options.lookupImpl)).toString();
-      continue;
-    }
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} fetching ${currentUrl}`);
-    }
-
-    const text = await readResponseWithByteLimit(response, maxBytes);
-    return {
-      url: currentUrl,
-      status: response.status,
-      contentType: response.headers.get('content-type') ?? '',
-      text,
-    };
   }
 
   throw new Error(`Failed to fetch ${rawUrl}`);
+}
+
+export async function safeFetchText(
+  rawUrl: string,
+  options: SafeFetchOptions = {},
+): Promise<{ url: string; status: number; contentType: string; text: string }> {
+  const res = await safeFetchBuffer(rawUrl, options);
+  return {
+    url: res.url,
+    status: res.status,
+    contentType: res.contentType,
+    text: new TextDecoder().decode(res.buffer),
+  };
 }

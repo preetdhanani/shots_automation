@@ -284,6 +284,8 @@ describe('Custom OpenAI-Compatible LLM Support', () => {
         musicEnabled: true,
         musicVolumeDb: -22,
         activeLlmEndpointId: null,
+        aiBrollEnabled: false,
+        voiceRotation: false,
       });
       expect(settings.brandHandle).toBe('@legacy.dev');
       expect(settings.activeLlmEndpointId).toBeNull();

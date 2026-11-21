@@ -27,6 +27,8 @@ VERIFY_BASE_URL=http://127.0.0.1:4310 npm run verify:e2e
 - Boots an isolated ephemeral server (`127.0.0.1:0`) with its own temp SQLite database, valid fixture media, and a local mock OpenAI-compatible LLM server.
 - Never modifies or pollutes `data/post.db`.
 - Launches headless Chromium using Remotion's bundled Chrome Headless Shell (`@remotion/renderer`).
+- Verifies the Video Variety Engine end-to-end (`07-video-variety`): 4 sequential Auto reels produce 4 distinct formats, varied backgrounds/moods/voices, low pairwise similarity, source visual attachment, explicit countdown ranks, Reshuffle Style, and new scene editor + settings controls.
+- Renders real Remotion stills (`08-remotion-visual-variety`) across all 16 scene types x layouts, 6 backgrounds, 8 transitions, 4 caption styles, 4 typographies, 8 format samples, plus `<Img>` and `<OffthreadVideo>` assets & fallbacks, checking non-blank luminance and pixel distinctness and attaching contact sheets to the report.
 - Fails automatically if any check fails, if any browser `console.error` or uncaught exception occurs, or if any unexpected HTTP `4xx`/`5xx` response is returned.
 - Writes timestamped PNG screenshots and a full Markdown + JSON report to `artifacts/verification/<run-id>/` (and updates `artifacts/verification/latest-report.md`).
 

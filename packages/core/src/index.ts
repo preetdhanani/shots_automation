@@ -2,60 +2,7 @@ export { findWorkspaceRoot, loadEnv, reloadDotEnv, type AppEnv } from './config/
 
 export { computeNarrationHash, computeStoryboardVisualHash } from './schemas/hashes.js';
 
-export {
-  assembleInstagramCaption,
-  CONTENT_PILLARS,
-  countWords,
-  PILLAR_LABELS,
-  PillarSchema,
-  ReelSceneSchema,
-  ReelStoryboardSchema,
-  validateStoryboardEditorial,
-  VOICE_NAMES,
-  VOICE_PROFILES,
-  VoiceNameSchema,
-  type AiMediaClipScene,
-  type BenchmarkBarsScene,
-  type CodeCompareScene,
-  type ContentPillar,
-  type EditorialCheckResult,
-  type HookTitleScene,
-  type NewsQuoteCardScene,
-  type ReelScene,
-  type ReelStoryboard,
-  type TakeawayCtaScene,
-  type TerminalDemoScene,
-  type VoiceName,
-} from './schemas/storyboard.js';
-
-export {
-  CaptionTokenSchema,
-  ReelCaptionsFileSchema,
-  SceneTimingSchema,
-  VideoSpecReportSchema,
-  type CaptionToken,
-  type ReelCaptionsFile,
-  type SceneTiming,
-  type VideoSpecReport,
-} from './schemas/media.js';
-
-export {
-  isLoopbackUrl,
-  LLM_ENDPOINT_PRESETS,
-  LLM_ENDPOINT_SOURCES,
-  LLM_PROVIDERS,
-  LlmEndpointPublicSchema,
-  LlmEndpointSourceSchema,
-  LlmProviderSchema,
-  maskApiKey,
-  normalizeOpenAIBaseUrl,
-  RESERVED_LLM_ENDPOINT_IDS,
-  validateApiKeyValue,
-  type LlmEndpointPreset,
-  type LlmEndpointPublicDto,
-  type LlmEndpointSource,
-  type LlmProvider,
-} from './schemas/llm.js';
+export * from './shared.js';
 
 export {
   computeStaleness,
@@ -85,7 +32,13 @@ export {
 
 export { assertSafeId, LocalAssetStorage } from './storage/assets.js';
 
-export { assertSafePublicUrl, isPrivateOrReservedIp, safeFetchText } from './discovery/ssrf.js';
+export {
+  assertSafePublicUrl,
+  isPrivateOrReservedIp,
+  safeFetchBuffer,
+  safeFetchText,
+  type SafeFetchOptions,
+} from './discovery/ssrf.js';
 export {
   canonicalizeUrl,
   classifyPillar,
@@ -109,9 +62,11 @@ export { GITHUB_RELEASE_SOURCES, RSS_SOURCES } from './discovery/sources.js';
 
 export { checkGeminiHealth, type GeminiHealthResult } from './generation/geminiClient.js';
 export {
+  buildGeminiStoryboardJsonSchema,
   convertFlatGeminiResponseToStoryboard,
   GEMINI_STORYBOARD_JSON_SCHEMA,
   normalizeRawStoryboardPayload,
+  toFlatStoryboardPayload,
 } from './generation/geminiSchema.js';
 export {
   getDefaultAppSettingsFromEnv,
@@ -128,18 +83,22 @@ export {
   type LlmHealthResult,
 } from './generation/openaiCompatibleClient.js';
 export {
-  appendChannelOutroScene,
-  CHANNEL_OUTRO_NARRATION,
-  createChannelOutroScene,
   generateStoryboard,
   generateStoryboardWithGemini,
   type GenerateStoryboardInput,
 } from './generation/scriptGenerator.js';
 export {
+  generateVeoBrollClip,
+  type GenerateBrollOptions,
+  type GenerateBrollResult,
+  type VeoClientLike,
+} from './generation/broll.js';
+export {
   getOrCreateVoicePreview,
   getVoicePreviewHash,
   synthesizeSampleVoiceMacOS,
   synthesizeVoiceWithGemini,
+  type SynthesizedVoiceResult,
 } from './generation/tts.js';
 export {
   detectWhisperCliPath,
@@ -162,6 +121,19 @@ export {
 
 export { ensureGeneratedAudioAssets } from './media/audioAssets.js';
 export {
+  buildSfxCuesForStoryboard,
+  ensureMusicAndSfxLibrary,
+  resolveMusicTrackForMood,
+  RISER_DURATION_MS,
+  type AudioSfxCue,
+  type GeneratedAudioLibrary,
+} from './media/musicLibrary.js';
+export {
+  extractSocialImageUrl,
+  fetchSourceVisual,
+  type FetchSourceVisualOptions,
+} from './media/sourceVisuals.js';
+export {
   buildDeliveryFfmpegArgs,
   checkFfmpegAvailability,
   detectGeminiAudioInput,
@@ -171,6 +143,7 @@ export {
   prepareNormalizedVoicePair,
   probeVideo,
   verifyInstagramReelSpec,
+  type DeliveryEncodeOptions,
 } from './media/ffmpeg.js';
 export { runSubprocess, SubprocessCancelledError } from './media/subprocess.js';
 
@@ -191,6 +164,9 @@ export { SAMPLE_DEMO_STORYBOARD } from './pipeline/sampleFixture.js';
 export { PipelineQueue, type RunStreamEvent } from './pipeline/queue.js';
 export {
   ReelOrchestrator,
+  type FetchSourceVisualFn,
+  type GenerateBrollFn,
   type OrchestratorDeps,
   type RenderVideoCallback,
+  type SynthesizeVoiceFn,
 } from './pipeline/orchestrator.js';

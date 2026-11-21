@@ -3,7 +3,8 @@ import path from 'node:path';
 import type { AppEnv } from '../config/env.js';
 import { runSubprocess } from '../media/subprocess.js';
 import type { CaptionToken, ReelCaptionsFile, SceneTiming } from '../schemas/media.js';
-import { PILLAR_LABELS, type ReelScene, type ReelStoryboard } from '../schemas/storyboard.js';
+import type { ReelScene, ReelStoryboard } from '../schemas/storyboard.js';
+import { SCENE_SHORT_LABELS } from '../variety/registry.js';
 import { detectWhisperCliPath, getWhisperModelPath, WHISPER_MODEL_EXPECTED_BYTES } from './whisperSetup.js';
 
 export interface WhisperWordAnchor {
@@ -200,22 +201,7 @@ function similarityScore(a: string, b: string): number {
 }
 
 function getSceneLabel(scene: ReelScene): string {
-  switch (scene.type) {
-    case 'hook_title':
-      return 'Hook';
-    case 'benchmark_bars':
-      return 'Benchmark';
-    case 'code_compare':
-      return 'Code';
-    case 'terminal_demo':
-      return 'Terminal';
-    case 'news_quote_card':
-      return 'News';
-    case 'takeaway_cta':
-      return 'Takeaway';
-    case 'ai_media_clip':
-      return PILLAR_LABELS.ai_news;
-  }
+  return SCENE_SHORT_LABELS[scene.type];
 }
 
 export function alignStoryboardWithWhisperAnchors(

@@ -621,6 +621,8 @@ export async function callOpenAICompatibleStoryboard(opts: {
   apiKey?: string;
   systemPrompt: string;
   userPrompt: string;
+  jsonSchema?: Record<string, unknown>;
+  temperature?: number;
   signal?: AbortSignal;
 }): Promise<unknown> {
   const normalizedUrl = normalizeOpenAIBaseUrl(opts.baseUrl);
@@ -640,7 +642,7 @@ export async function callOpenAICompatibleStoryboard(opts: {
     };
 
     if (includeTemperature) {
-      payload.temperature = 0.45;
+      payload.temperature = opts.temperature ?? 0.85;
     }
     if (useMaxCompletionTokens) {
       payload.max_completion_tokens = 8192;
@@ -653,7 +655,7 @@ export async function callOpenAICompatibleStoryboard(opts: {
         json_schema: {
           name: 'reel_storyboard',
           strict: false,
-          schema: GEMINI_STORYBOARD_JSON_SCHEMA,
+          schema: opts.jsonSchema ?? GEMINI_STORYBOARD_JSON_SCHEMA,
         },
       };
     } else if (formatMode === 'json_object') {

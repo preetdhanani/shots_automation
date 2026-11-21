@@ -1,14 +1,38 @@
 import React, { useState } from 'react';
 import {
+  CAMERA_MOVE_IDS,
+  CAMERA_MOVE_LABELS,
   countWords,
+  DEFAULT_CAMERA_MOVE,
+  DEFAULT_TRANSITION,
+  LAYOUT_LABELS,
+  resolveLayout,
+  SCENE_LAYOUTS,
+  SCENE_TYPE_LABELS,
+  SOCIAL_PLATFORMS,
+  TRANSITION_IDS,
+  TRANSITION_LABELS,
+  type AiMediaClipScene,
   type BenchmarkBarsScene,
+  type BigStatScene,
+  type CameraMoveId,
+  type ChecklistStepsScene,
   type CodeCompareScene,
+  type CountdownItemScene,
   type HookTitleScene,
+  type LineChartScene,
+  type MythFactScene,
   type NewsQuoteCardScene,
   type ReelScene,
   type ReelStoryboard,
+  type SceneVisual,
+  type SocialPostScene,
+  type SourceSpotlightScene,
   type TakeawayCtaScene,
   type TerminalDemoScene,
+  type TimelineScene,
+  type TransitionId,
+  type VersusSplitScene,
 } from '@post/core/shared';
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
 
@@ -21,22 +45,7 @@ const INPUT_CLS =
   'w-full rounded-lg border border-white/10 bg-[#171A24] px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-400/60 focus:outline-none';
 
 function sceneTypeTitle(scene: ReelScene): string {
-  switch (scene.type) {
-    case 'hook_title':
-      return 'Hook Title';
-    case 'benchmark_bars':
-      return 'Benchmark Chart';
-    case 'code_compare':
-      return 'Code Compare';
-    case 'terminal_demo':
-      return 'Terminal Demo';
-    case 'news_quote_card':
-      return 'News Card';
-    case 'takeaway_cta':
-      return 'Takeaway & CTA';
-    case 'ai_media_clip':
-      return 'AI Media Clip';
-  }
+  return SCENE_TYPE_LABELS[scene.type];
 }
 
 export const VisualSceneEditor: React.FC<Props> = ({ storyboard, onChange }) => {
@@ -86,6 +95,12 @@ export const VisualSceneEditor: React.FC<Props> = ({ storyboard, onChange }) => 
 
             {isOpen ? (
               <div className="space-y-3.5 border-t border-white/10 p-4">
+                {/* Per-scene Visual Look controls */}
+                <SceneVisualControls
+                  scene={scene}
+                  onChange={(visual) => updateScene(idx, { ...scene, visual })}
+                />
+
                 {/* Narration field */}
                 <div>
                   <div className="mb-1 flex items-center justify-between">
@@ -144,6 +159,76 @@ export const VisualSceneEditor: React.FC<Props> = ({ storyboard, onChange }) => 
 
                 {scene.type === 'takeaway_cta' ? (
                   <TakeawayFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'big_stat' ? (
+                  <BigStatFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'versus_split' ? (
+                  <VersusSplitFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'checklist_steps' ? (
+                  <ChecklistStepsFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'timeline' ? (
+                  <TimelineFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'social_post' ? (
+                  <SocialPostFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'line_chart' ? (
+                  <LineChartFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'countdown_item' ? (
+                  <CountdownItemFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'myth_fact' ? (
+                  <MythFactFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'source_spotlight' ? (
+                  <SourceSpotlightFields
+                    scene={scene}
+                    onChange={(next) => updateScene(idx, next)}
+                  />
+                ) : null}
+
+                {scene.type === 'ai_media_clip' ? (
+                  <AiMediaClipFields
                     scene={scene}
                     onChange={(next) => updateScene(idx, next)}
                   />
@@ -542,6 +627,578 @@ const TakeawayFields: React.FC<{
         className={INPUT_CLS}
         value={scene.takeaway}
         onChange={(e) => onChange({ ...scene, takeaway: e.target.value })}
+      />
+    </div>
+  </div>
+);
+
+const SceneVisualControls: React.FC<{
+  scene: ReelScene;
+  onChange: (next: SceneVisual) => void;
+}> = ({ scene, onChange }) => {
+  const layouts = SCENE_LAYOUTS[scene.type] as readonly string[];
+  const currentVisual: SceneVisual = scene.visual ?? {};
+  const layoutVal = resolveLayout(scene.type, currentVisual.layout);
+  const transitionVal = currentVisual.transition ?? DEFAULT_TRANSITION;
+  const cameraVal = currentVisual.camera ?? DEFAULT_CAMERA_MOVE;
+
+  return (
+    <div className="grid grid-cols-1 gap-2.5 rounded-lg border border-white/8 bg-[#0E1119] p-3 sm:grid-cols-3">
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-zinc-400">Scene Layout</label>
+        <select
+          aria-label="Scene Layout"
+          className={INPUT_CLS}
+          value={layoutVal}
+          onChange={(e) => onChange({ ...currentVisual, layout: e.target.value })}
+        >
+          {layouts.map((id) => (
+            <option key={id} value={id}>
+              {LAYOUT_LABELS[id] ?? id}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-zinc-400">Transition</label>
+        <select
+          aria-label="Scene Transition"
+          className={INPUT_CLS}
+          value={transitionVal}
+          onChange={(e) =>
+            onChange({ ...currentVisual, transition: e.target.value as TransitionId })
+          }
+        >
+          {TRANSITION_IDS.map((id) => (
+            <option key={id} value={id}>
+              {TRANSITION_LABELS[id]}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-zinc-400">Camera Move</label>
+        <select
+          aria-label="Scene Camera Move"
+          className={INPUT_CLS}
+          value={cameraVal}
+          onChange={(e) =>
+            onChange({ ...currentVisual, camera: e.target.value as CameraMoveId })
+          }
+        >
+          {CAMERA_MOVE_IDS.map((id) => (
+            <option key={id} value={id}>
+              {CAMERA_MOVE_LABELS[id]}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+};
+
+const BigStatFields: React.FC<{
+  scene: BigStatScene;
+  onChange: (s: BigStatScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Stat Value</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.value}
+          onChange={(e) => onChange({ ...scene, value: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Trend</label>
+        <select
+          className={INPUT_CLS}
+          value={scene.trend ?? 'neutral'}
+          onChange={(e) =>
+            onChange({ ...scene, trend: e.target.value as 'up' | 'down' | 'neutral' })
+          }
+        >
+          <option value="up">Up</option>
+          <option value="down">Down</option>
+          <option value="neutral">Neutral</option>
+        </select>
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Source Label</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.sourceLabel ?? ''}
+          onChange={(e) =>
+            onChange({ ...scene, sourceLabel: e.target.value.trim() || undefined })
+          }
+        />
+      </div>
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Label</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.label}
+        onChange={(e) => onChange({ ...scene, label: e.target.value })}
+      />
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Context</label>
+      <textarea
+        rows={2}
+        className={INPUT_CLS}
+        value={scene.context}
+        onChange={(e) => onChange({ ...scene, context: e.target.value })}
+      />
+    </div>
+  </div>
+);
+
+const VersusSplitFields: React.FC<{
+  scene: VersusSplitScene;
+  onChange: (s: VersusSplitScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Title</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.title}
+          onChange={(e) => onChange({ ...scene, title: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Winner</label>
+        <select
+          className={INPUT_CLS}
+          value={scene.winner ?? 'tie'}
+          onChange={(e) =>
+            onChange({ ...scene, winner: e.target.value as 'left' | 'right' | 'tie' })
+          }
+        >
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+          <option value="tie">Tie</option>
+        </select>
+      </div>
+    </div>
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {(['left', 'right'] as const).map((sideKey) => {
+        const side = scene[sideKey];
+        return (
+          <div key={sideKey} className="space-y-2 rounded-lg border border-white/8 bg-[#0E1119] p-3">
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                className={INPUT_CLS}
+                placeholder="Side Name"
+                value={side.name}
+                onChange={(e) =>
+                  onChange({ ...scene, [sideKey]: { ...side, name: e.target.value } })
+                }
+              />
+              <input
+                className={INPUT_CLS}
+                placeholder="Score (opt)"
+                value={side.score ?? ''}
+                onChange={(e) =>
+                  onChange({
+                    ...scene,
+                    [sideKey]: { ...side, score: e.target.value.trim() || undefined },
+                  })
+                }
+              />
+            </div>
+            {side.points.map((pt, pIdx) => (
+              <input
+                key={pIdx}
+                className={INPUT_CLS}
+                value={pt}
+                onChange={(e) => {
+                  const points = side.points.map((x, i) => (i === pIdx ? e.target.value : x));
+                  onChange({ ...scene, [sideKey]: { ...side, points } });
+                }}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Verdict (optional)</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.verdict ?? ''}
+        onChange={(e) => onChange({ ...scene, verdict: e.target.value.trim() || undefined })}
+      />
+    </div>
+  </div>
+);
+
+const ChecklistStepsFields: React.FC<{
+  scene: ChecklistStepsScene;
+  onChange: (s: ChecklistStepsScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Title</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.title}
+          onChange={(e) => onChange({ ...scene, title: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Mode</label>
+        <select
+          className={INPUT_CLS}
+          value={scene.mode}
+          onChange={(e) =>
+            onChange({ ...scene, mode: e.target.value as 'steps' | 'checklist' })
+          }
+        >
+          <option value="steps">Numbered Steps</option>
+          <option value="checklist">Checklist</option>
+        </select>
+      </div>
+    </div>
+    <div className="space-y-2">
+      {scene.items.map((item, i) => (
+        <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <input
+            className={INPUT_CLS}
+            value={item.text}
+            placeholder="Step text"
+            onChange={(e) => {
+              const items = scene.items.map((x, idx) =>
+                idx === i ? { ...x, text: e.target.value } : x,
+              );
+              onChange({ ...scene, items });
+            }}
+          />
+          <input
+            className={INPUT_CLS}
+            value={item.detail ?? ''}
+            placeholder="Detail (optional)"
+            onChange={(e) => {
+              const items = scene.items.map((x, idx) =>
+                idx === i ? { ...x, detail: e.target.value.trim() || undefined } : x,
+              );
+              onChange({ ...scene, items });
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const TimelineFields: React.FC<{
+  scene: TimelineScene;
+  onChange: (s: TimelineScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Title</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.title}
+        onChange={(e) => onChange({ ...scene, title: e.target.value })}
+      />
+    </div>
+    <div className="space-y-2">
+      {scene.events.map((ev, i) => (
+        <div key={i} className="grid grid-cols-3 gap-2">
+          <input
+            className={INPUT_CLS}
+            value={ev.label}
+            placeholder="Date / Stage"
+            onChange={(e) => {
+              const events = scene.events.map((x, idx) =>
+                idx === i ? { ...x, label: e.target.value } : x,
+              );
+              onChange({ ...scene, events });
+            }}
+          />
+          <input
+            className={`${INPUT_CLS} col-span-2`}
+            value={ev.text}
+            placeholder="Milestone"
+            onChange={(e) => {
+              const events = scene.events.map((x, idx) =>
+                idx === i ? { ...x, text: e.target.value } : x,
+              );
+              onChange({ ...scene, events });
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const SocialPostFields: React.FC<{
+  scene: SocialPostScene;
+  onChange: (s: SocialPostScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Author</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.authorName}
+          onChange={(e) => onChange({ ...scene, authorName: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Handle</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.authorHandle ?? ''}
+          onChange={(e) =>
+            onChange({ ...scene, authorHandle: e.target.value.trim() || undefined })
+          }
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Platform</label>
+        <select
+          className={INPUT_CLS}
+          value={scene.platform}
+          onChange={(e) =>
+            onChange({
+              ...scene,
+              platform: e.target.value as SocialPostScene['platform'],
+            })
+          }
+        >
+          {SOCIAL_PLATFORMS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Quoted Post Text</label>
+      <textarea
+        rows={2}
+        className={INPUT_CLS}
+        value={scene.postText}
+        onChange={(e) => onChange({ ...scene, postText: e.target.value })}
+      />
+    </div>
+  </div>
+);
+
+const LineChartFields: React.FC<{
+  scene: LineChartScene;
+  onChange: (s: LineChartScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="sm:col-span-2">
+        <label className="mb-1 block text-xs text-zinc-400">Title</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.title}
+          onChange={(e) => onChange({ ...scene, title: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Unit</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.metricUnit}
+          onChange={(e) => onChange({ ...scene, metricUnit: e.target.value })}
+        />
+      </div>
+    </div>
+    <div className="space-y-2">
+      {scene.points.map((pt, i) => (
+        <div key={i} className="grid grid-cols-2 gap-2">
+          <input
+            className={INPUT_CLS}
+            value={pt.label}
+            onChange={(e) => {
+              const points = scene.points.map((x, idx) =>
+                idx === i ? { ...x, label: e.target.value } : x,
+              );
+              onChange({ ...scene, points });
+            }}
+          />
+          <input
+            type="number"
+            step="any"
+            className={INPUT_CLS}
+            value={pt.value}
+            onChange={(e) => {
+              const val = Number.parseFloat(e.target.value);
+              const points = scene.points.map((x, idx) =>
+                idx === i ? { ...x, value: Number.isFinite(val) ? val : 0 } : x,
+              );
+              onChange({ ...scene, points });
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const CountdownItemFields: React.FC<{
+  scene: CountdownItemScene;
+  onChange: (s: CountdownItemScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Rank</label>
+        <input
+          type="number"
+          min={1}
+          max={10}
+          className={INPUT_CLS}
+          value={scene.rank}
+          onChange={(e) => {
+            const val = Number.parseInt(e.target.value, 10);
+            if (Number.isFinite(val) && val >= 1 && val <= 10) {
+              onChange({ ...scene, rank: val });
+            }
+          }}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Tag (optional)</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.tag ?? ''}
+          onChange={(e) => onChange({ ...scene, tag: e.target.value.trim() || undefined })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Title</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.title}
+          onChange={(e) => onChange({ ...scene, title: e.target.value })}
+        />
+      </div>
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Detail</label>
+      <textarea
+        rows={2}
+        className={INPUT_CLS}
+        value={scene.detail}
+        onChange={(e) => onChange({ ...scene, detail: e.target.value })}
+      />
+    </div>
+  </div>
+);
+
+const MythFactFields: React.FC<{
+  scene: MythFactScene;
+  onChange: (s: MythFactScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Myth</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.myth}
+        onChange={(e) => onChange({ ...scene, myth: e.target.value })}
+      />
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Fact / Reality</label>
+      <textarea
+        rows={2}
+        className={INPUT_CLS}
+        value={scene.fact}
+        onChange={(e) => onChange({ ...scene, fact: e.target.value })}
+      />
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Source Label (optional)</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.sourceLabel ?? ''}
+        onChange={(e) =>
+          onChange({ ...scene, sourceLabel: e.target.value.trim() || undefined })
+        }
+      />
+    </div>
+  </div>
+);
+
+const SourceSpotlightFields: React.FC<{
+  scene: SourceSpotlightScene;
+  onChange: (s: SourceSpotlightScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Source Domain</label>
+        <input
+          className={INPUT_CLS}
+          value={scene.domain}
+          onChange={(e) => onChange({ ...scene, domain: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">Attached Image Asset</label>
+        <input
+          className={`${INPUT_CLS} opacity-65`}
+          readOnly
+          value={scene.imageAsset ? `Asset: ${scene.imageAsset}` : 'Editorial fallback (no image)'}
+        />
+      </div>
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Headline</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.headline}
+        onChange={(e) => onChange({ ...scene, headline: e.target.value })}
+      />
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Caption (optional)</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.caption ?? ''}
+        onChange={(e) => onChange({ ...scene, caption: e.target.value.trim() || undefined })}
+      />
+    </div>
+  </div>
+);
+
+const AiMediaClipFields: React.FC<{
+  scene: AiMediaClipScene;
+  onChange: (s: AiMediaClipScene) => void;
+}> = ({ scene, onChange }) => (
+  <div className="space-y-3">
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Overlay Caption Text</label>
+      <input
+        className={INPUT_CLS}
+        value={scene.captionText}
+        onChange={(e) => onChange({ ...scene, captionText: e.target.value })}
+      />
+    </div>
+    <div>
+      <label className="mb-1 block text-xs text-zinc-400">Veo Visual Prompt</label>
+      <textarea
+        rows={2}
+        className={INPUT_CLS}
+        value={scene.prompt}
+        onChange={(e) => onChange({ ...scene, prompt: e.target.value })}
       />
     </div>
   </div>

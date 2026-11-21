@@ -15,10 +15,12 @@ import {
   loadEnv,
   LocalAssetStorage,
   PipelineQueue,
+  REEL_FORMAT_IDS,
   ReelOrchestrator,
   resolveActiveLlmEndpoint,
   SqliteStore,
   type ContentPillar,
+  type ReelFormatId,
 } from '@post/core';
 import { renderRemotionVideo } from '@post/video';
 
@@ -256,7 +258,12 @@ async function main(): Promise<void> {
       const prompt = getArg(args, '--prompt');
       const url = getArg(args, '--url');
       const pillarArg = getArg(args, '--pillar') as ContentPillar | undefined;
+      const formatArg = getArg(args, '--format') as ReelFormatId | 'auto' | undefined;
       const llmEndpointId = getArg(args, '--llm');
+      const format =
+        formatArg === 'auto' || (formatArg && REEL_FORMAT_IDS.includes(formatArg))
+          ? formatArg
+          : undefined;
 
       if (args.includes('--sample')) {
         const { reel, run } = orchestrator.startSampleReel();
@@ -281,7 +288,7 @@ async function main(): Promise<void> {
         });
       }
 
-      const { reel, run } = orchestrator.startGenerateFromTopic({ topic, llmEndpointId });
+      const { reel, run } = orchestrator.startGenerateFromTopic({ topic, format, llmEndpointId });
       await waitForRunCompletion(queue, store, run.id);
       console.log(`Reel ready for review: ${reel.id} -> ${storage.reelFile(reel.id, 'final.mp4')}`);
       return;

@@ -42,6 +42,8 @@ export const SettingsView: React.FC<Props> = ({
   const [brandHandle, setBrandHandle] = useState(health?.settings.brandHandle ?? '@ai.dev.reels');
   const [musicEnabled, setMusicEnabled] = useState(health?.settings.musicEnabled ?? true);
   const [musicVolumeDb, setMusicVolumeDb] = useState(health?.settings.musicVolumeDb ?? -22);
+  const [voiceRotation, setVoiceRotation] = useState(health?.settings.voiceRotation ?? false);
+  const [aiBrollEnabled, setAiBrollEnabled] = useState(health?.settings.aiBrollEnabled ?? false);
   const [saving, setSaving] = useState(false);
   const [playingVoice, setPlayingVoice] = useState<VoiceName | null>(null);
 
@@ -51,6 +53,8 @@ export const SettingsView: React.FC<Props> = ({
     setBrandHandle(health.settings.brandHandle);
     setMusicEnabled(health.settings.musicEnabled);
     setMusicVolumeDb(health.settings.musicVolumeDb);
+    setVoiceRotation(Boolean(health.settings.voiceRotation));
+    setAiBrollEnabled(Boolean(health.settings.aiBrollEnabled));
   }, [health]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -64,6 +68,8 @@ export const SettingsView: React.FC<Props> = ({
           brandHandle,
           musicEnabled,
           musicVolumeDb,
+          voiceRotation,
+          aiBrollEnabled,
         }),
       });
       onSettingsUpdated();
@@ -293,6 +299,55 @@ export const SettingsView: React.FC<Props> = ({
               onChange={(e) => setMusicEnabled(e.target.checked)}
               className="h-4 w-4 accent-cyan-400"
             />
+          </div>
+        </div>
+
+        {/* Video Variety Section */}
+        <div className="space-y-3 border-t border-white/10 pt-4">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-100">Video Variety</h3>
+            <p className="text-xs text-zinc-400">
+              Control automatic voice rotation and optional AI B-roll generation across new Reels.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#171A24] px-4 py-3">
+              <div>
+                <span className="text-sm font-medium text-zinc-200">Auto-Rotate Voices</span>
+                <p className="text-xs text-zinc-400">
+                  Cycle through Gemini voices and avoid repeating the last 2 reels
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                aria-label="Auto-Rotate Voices"
+                checked={voiceRotation}
+                onChange={(e) => setVoiceRotation(e.target.checked)}
+                className="h-4 w-4 shrink-0 accent-cyan-400"
+              />
+            </label>
+
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-[#171A24] px-4 py-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-200">AI B-Roll Clips (Veo)</span>
+                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-amber-300">
+                    PAID API
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400">
+                  Off by default. Generates 9:16 Veo motion clips (billed per clip via Gemini API).
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                aria-label="AI B-Roll Clips (Veo)"
+                checked={aiBrollEnabled}
+                onChange={(e) => setAiBrollEnabled(e.target.checked)}
+                className="h-4 w-4 shrink-0 accent-amber-400"
+              />
+            </label>
           </div>
         </div>
 

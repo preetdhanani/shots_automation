@@ -158,6 +158,8 @@ async function main(): Promise<void> {
           driver,
           harness,
           liveMode,
+          workspaceRoot: WORKSPACE_ROOT,
+          shotsDir,
           recordAssertion: (label) => {
             assertions.push(label);
           },
@@ -166,6 +168,21 @@ async function main(): Promise<void> {
             const fileName = `${safeName}.png`;
             const filePath = path.join(shotsDir, fileName);
             await driver!.screenshot(filePath, opts);
+            screenshots.push({
+              name: safeName,
+              filePath,
+              relativePath: `screenshots/${fileName}`,
+              caption,
+            });
+          },
+          attachImage: (name, sourceFilePath, caption) => {
+            const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '-');
+            const ext = path.extname(sourceFilePath).toLowerCase() || '.png';
+            const fileName = `${safeName}${ext}`;
+            const filePath = path.join(shotsDir, fileName);
+            if (path.resolve(sourceFilePath) !== path.resolve(filePath)) {
+              fs.copyFileSync(sourceFilePath, filePath);
+            }
             screenshots.push({
               name: safeName,
               filePath,

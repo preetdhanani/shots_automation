@@ -30,6 +30,8 @@ export function getDefaultAppSettingsFromEnv(env: AppEnv): AppSettings {
     musicEnabled: true,
     musicVolumeDb: -22,
     activeLlmEndpointId: null,
+    aiBrollEnabled: false,
+    voiceRotation: false,
   };
 }
 

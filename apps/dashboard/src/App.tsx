@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { ContentPillar, VoiceName } from '@post/core/shared';
+import type { ContentPillar, ReelFormatId, VoiceName } from '@post/core/shared';
 import { Archive, CheckSquare, Compass, Layers, Loader2, Plus, Settings, Sparkles, X } from 'lucide-react';
 import {
   apiFetch,
@@ -773,6 +773,7 @@ export const App: React.FC = () => {
         open={customModalOpen}
         topic={selectedTopicForModal}
         defaultVoice={health?.settings.defaultVoice ?? 'Puck'}
+        defaultVoiceRotation={Boolean(health?.settings.voiceRotation)}
         defaultMusicEnabled={health?.settings.musicEnabled ?? true}
         llmState={llmState}
         ttsReady={Boolean(llmState?.ttsReady ?? health?.geminiConfigured)}
@@ -785,7 +786,8 @@ export const App: React.FC = () => {
           prompt?: string;
           url?: string;
           pillar?: ContentPillar;
-          voiceName: VoiceName;
+          format?: ReelFormatId | 'auto';
+          voiceName: VoiceName | 'auto';
           musicEnabled: boolean;
           llmEndpointId?: string;
           stayOnPage?: boolean;

@@ -2,9 +2,12 @@ import React, { useEffect, useState } from 'react';
 import {
   CONTENT_PILLARS,
   PILLAR_LABELS,
+  REEL_FORMAT_LIST,
+  REEL_FORMATS,
   VOICE_NAMES,
   VOICE_PROFILES,
   type ContentPillar,
+  type ReelFormatId,
   type VoiceName,
 } from '@post/core/shared';
 import { Sparkles, Volume2, Square, X } from 'lucide-react';
@@ -15,6 +18,7 @@ interface Props {
   open: boolean;
   topic?: TopicDto | null;
   defaultVoice: VoiceName;
+  defaultVoiceRotation?: boolean;
   defaultMusicEnabled: boolean;
   llmState: LlmStateDto | null;
   ttsReady: boolean;
@@ -24,7 +28,8 @@ interface Props {
     prompt?: string;
     url?: string;
     pillar?: ContentPillar;
-    voiceName: VoiceName;
+    format?: ReelFormatId | 'auto';
+    voiceName: VoiceName | 'auto';
     musicEnabled: boolean;
     llmEndpointId?: string;
     stayOnPage?: boolean;
@@ -36,6 +41,7 @@ export const CustomReelModal: React.FC<Props> = ({
   open,
   topic = null,
   defaultVoice,
+  defaultVoiceRotation = false,
   defaultMusicEnabled,
   llmState,
   ttsReady,
@@ -46,7 +52,10 @@ export const CustomReelModal: React.FC<Props> = ({
   const [prompt, setPrompt] = useState('');
   const [url, setUrl] = useState('');
   const [pillar, setPillar] = useState<ContentPillar>('harnesses');
-  const [voiceName, setVoiceName] = useState<VoiceName>(defaultVoice);
+  const [format, setFormat] = useState<ReelFormatId | 'auto'>('auto');
+  const [voiceName, setVoiceName] = useState<VoiceName | 'auto'>(
+    defaultVoiceRotation ? 'auto' : defaultVoice,
+  );
   const [musicEnabled, setMusicEnabled] = useState<boolean>(defaultMusicEnabled);
   const [llmEndpointId, setLlmEndpointId] = useState<string>(
     llmState?.activeEndpointId ?? 'gemini',
@@ -56,10 +65,11 @@ export const CustomReelModal: React.FC<Props> = ({
 
   useEffect(() => {
     if (!open) return;
-    setVoiceName(defaultVoice);
+    setFormat('auto');
+    setVoiceName(defaultVoiceRotation ? 'auto' : defaultVoice);
     setMusicEnabled(defaultMusicEnabled);
     setLlmEndpointId(llmState?.activeEndpointId ?? 'gemini');
-  }, [open, defaultVoice, defaultMusicEnabled, llmState?.activeEndpointId]);
+  }, [open, defaultVoice, defaultVoiceRotation, defaultMusicEnabled, llmState?.activeEndpointId]);
 
   if (!open) return null;
 
@@ -68,6 +78,7 @@ export const CustomReelModal: React.FC<Props> = ({
     endpoints.find((ep) => ep.id === llmEndpointId) ?? llmState?.activeEndpoint ?? null;
   const scriptReady = Boolean(selectedEndpoint?.configured);
   const canGenerate = scriptReady && ttsReady;
+  const selectedFormatSpec = format === 'auto' ? null : REEL_FORMATS[format];
 
   const submitGeneration = async (stayOnPage: boolean) => {
     if (!topic && !prompt.trim() && !url.trim()) {
@@ -80,6 +91,7 @@ export const CustomReelModal: React.FC<Props> = ({
       if (topic) {
         await onGenerate({
           topicId: topic.id,
+          format,
           voiceName,
           musicEnabled,
           llmEndpointId: selectedEndpoint?.id,
@@ -90,6 +102,7 @@ export const CustomReelModal: React.FC<Props> = ({
           prompt: prompt.trim(),
           url: url.trim(),
           pillar,
+          format,
           voiceName,
           musicEnabled,
           llmEndpointId: selectedEndpoint?.id,
@@ -112,6 +125,7 @@ export const CustomReelModal: React.FC<Props> = ({
   };
 
   const handlePreviewVoice = async () => {
+    if (voiceName === 'auto') return;
     if (playingVoice === voiceName) {
       stopVoicePreview();
       return;
@@ -139,7 +153,7 @@ export const CustomReelModal: React.FC<Props> = ({
             </h2>
             <p className="mt-0.5 text-xs text-zinc-400">
               {topic
-                ? 'Choose your voiceover voice, Script LLM, and audio options before generating.'
+                ? 'Choose your Reel format, voiceover voice, Script LLM, and audio options before generating.'
                 : 'Enter a prompt, developer tip, or paste a blog/GitHub release URL.'}
             </p>
           </div>
@@ -198,6 +212,29 @@ export const CustomReelModal: React.FC<Props> = ({
             </>
           )}
 
+          {/* Reel Format selector */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-zinc-300">Reel Format</label>
+            <select
+              aria-label="Reel Format"
+              value={format}
+              onChange={(e) => setFormat(e.target.value as ReelFormatId | 'auto')}
+              className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3 py-2 text-sm text-zinc-100 focus:border-cyan-400/60 focus:outline-none"
+            >
+              <option value="auto">Auto (Anti-repeat planner - Recommended)</option>
+              {REEL_FORMAT_LIST.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label} ({f.sceneCount[0] === f.sceneCount[1] ? `${f.sceneCount[0]}` : `${f.sceneCount[0]}-${f.sceneCount[1]}`} scenes)
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-zinc-400">
+              {selectedFormatSpec
+                ? selectedFormatSpec.description
+                : 'Automatically varies format, hook style, background, typography, transitions, and music mood across recent reels.'}
+            </p>
+          </div>
+
           <div className={`grid grid-cols-1 gap-4 ${topic ? '' : 'sm:grid-cols-2'}`}>
             {!topic ? (
               <div>
@@ -224,10 +261,15 @@ export const CustomReelModal: React.FC<Props> = ({
               </label>
               <div className="flex items-center gap-2">
                 <select
+                  aria-label="Gemini TTS Voice"
                   value={voiceName}
-                  onChange={(e) => setVoiceName(e.target.value as VoiceName)}
+                  onChange={(e) => {
+                    stopVoicePreview();
+                    setVoiceName(e.target.value as VoiceName | 'auto');
+                  }}
                   className="w-full rounded-xl border border-white/10 bg-[#171A24] px-3 py-2 text-sm text-zinc-100 focus:border-cyan-400/60 focus:outline-none"
                 >
+                  <option value="auto">Auto-rotate (Avoid recent voices)</option>
                   {VOICE_NAMES.map((v) => (
                     <option key={v} value={v}>
                       {v} - {VOICE_PROFILES[v].tone}
@@ -236,13 +278,16 @@ export const CustomReelModal: React.FC<Props> = ({
                 </select>
                 <button
                   type="button"
+                  disabled={voiceName === 'auto'}
                   onClick={handlePreviewVoice}
                   title={
-                    ttsReady
-                      ? `Preview ${voiceName}`
-                      : 'Plays cached voice preview if available (requires GEMINI_API_KEY on first run)'
+                    voiceName === 'auto'
+                      ? 'Pick a specific voice to audition'
+                      : ttsReady
+                        ? `Preview ${voiceName}`
+                        : 'Plays cached voice preview if available (requires GEMINI_API_KEY on first run)'
                   }
-                  className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/10"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {playingVoice === voiceName ? (
                     <Square className="h-3.5 w-3.5 text-cyan-300" />
@@ -275,9 +320,9 @@ export const CustomReelModal: React.FC<Props> = ({
 
           <label className="flex cursor-pointer items-center justify-between rounded-xl border border-white/10 bg-[#171A24] px-3.5 py-2.5">
             <div>
-              <span className="text-sm font-medium text-zinc-200">Subtle Background Music</span>
+              <span className="text-sm font-medium text-zinc-200">Mood Music & Transition SFX</span>
               <p className="text-xs text-zinc-400">
-                Ducked ambient pad + soft scene transition clicks (-22dB)
+                Auto-ducked mood track + per-transition whoosh, pop, and riser cues
               </p>
             </div>
             <input

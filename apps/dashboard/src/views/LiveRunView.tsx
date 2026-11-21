@@ -91,7 +91,11 @@ export const LiveRunView: React.FC<Props> = ({
           parsed.run.status === 'CANCELLED'
         ) {
           source.close();
-          handleTerminal(parsed.run);
+          // Only trigger auto-redirect when the run transitions to terminal live,
+          // not when opening an already-completed run from the Render Queue.
+          if (evt.type !== 'snapshot') {
+            handleTerminal(parsed.run);
+          }
         }
       } catch {
         // Ignore malformed SSE line

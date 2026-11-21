@@ -37,7 +37,7 @@ describe('Storyboard Schemas & Editorial Quality Gate', () => {
     expect(idempotent.scenes).toHaveLength(6);
   });
 
-  it('rejects Phase 2 ai_media_clip scene in Phase 1', () => {
+  it('rejects ai_media_clip scene when AI B-roll is disabled, and allows 1 when enabled', () => {
     const mutated = {
       ...SAMPLE_DEMO_STORYBOARD,
       scenes: [
@@ -49,11 +49,15 @@ describe('Storyboard Schemas & Editorial Quality Gate', () => {
           prompt: 'Futuristic terminal room',
           captionText: 'AI Clip',
         },
+        SAMPLE_DEMO_STORYBOARD.scenes[5]!,
       ],
     };
-    const res = validateStoryboardEditorial(mutated);
-    expect(res.ok).toBe(false);
-    expect(res.errors.some((e) => e.includes('Phase 2'))).toBe(true);
+    const disabledRes = validateStoryboardEditorial(mutated);
+    expect(disabledRes.ok).toBe(false);
+    expect(disabledRes.errors.some((e) => e.includes('AI B-roll'))).toBe(true);
+
+    const enabledRes = validateStoryboardEditorial(mutated, { allowAiMediaClip: true });
+    expect(enabledRes.ok).toBe(true);
   });
 
   it('enforces 38-char code line limit and >= 6 words per scene', () => {

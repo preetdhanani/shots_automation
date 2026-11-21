@@ -28,9 +28,14 @@ export function computeStoryboardVisualHash(
   musicEnabled: boolean,
   brandHandle: string,
 ): string {
+  // Pass optional fields raw (never defaulted) so legacy reels without variety
+  // metadata keep identical hashes and do not become falsely stale.
   const payload = {
     title: storyboard.title,
     pillar: storyboard.pillar,
+    format: storyboard.format,
+    style: storyboard.style,
+    assets: storyboard.assets,
     scenes: storyboard.scenes,
     musicEnabled,
     brandHandle: brandHandle.trim(),

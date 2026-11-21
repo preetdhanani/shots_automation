@@ -6,8 +6,10 @@ A local-first macOS studio and CLI pipeline that discovers high-signal AI news, 
 
 - Multi-source developer discovery across official AI lab feeds, Hacker News, GitHub Releases, and custom prompt/URL inputs.
 - Selectable Script LLM endpoints supporting built-in Google Gemini as well as custom OpenAI-compatible servers (Ollama, LM Studio, OpenRouter, OpenAI, Groq, vLLM) via Studio Settings or `.env`.
-- Structured 5-scene vertical Reel storyboards (`hook_title`, `benchmark_bars`, `code_compare`, `terminal_demo`, `news_quote_card`, `takeaway_cta`) validated by an automated editorial quality gate.
-- Natural English voiceovers powered by Google Gemini TTS (`gemini-3.8-flash-tts`) with two-pass FFmpeg loudness normalization.
+- Video Variety Engine with 8 distinct Reel formats (`news_breakdown`, `hot_take`, `top3_countdown`, `myth_vs_fact`, `versus_battle`, `step_tutorial`, `deep_dive_demo`, `stat_shock`) and an anti-repeat history planner that avoids repeating recent formats, hooks, backgrounds, typographies, captions, palettes, music moods, and voices.
+- 16 Remotion scene types with multiple layout variants each, 6 animated backgrounds, 8 transitions, 5 camera moves, 4 typography presets, 4 caption styles, kinetic keyword emphasis, automatic source `og:image` spotlight visuals, and optional opt-in Gemini Veo 9:16 AI B-roll clips.
+- Multi-mood background music library (`dark_pad`, `upbeat_pulse`, `lofi_chill`, `tension_build`, `bright_synth`) with voice-ducked sidechain compression, per-transition SFX cues, and user drop-in support under `data/music/<mood>/`.
+- Natural English voiceovers powered by Google Gemini TTS (`gemini-3.8-flash-tts`) with automatic voice rotation and two-pass FFmpeg loudness normalization.
 - Fast offline word-level caption alignment using local Homebrew `whisper-cli` with Metal GPU acceleration and a 1-to-N Script-to-Whisper aligner so technical terms stay spelled accurately.
 - Programmatic `1080x1920` 30fps Remotion motion graphics rendered cleanly inside Instagram Reels safe zones and normalized by FFmpeg to strict Meta specifications.
 - Smooth 4-stage Approval Studio UI with live 6-step pipeline progress, interactive phone preview, Instagram HUD safe-zone overlay, visual scene editor, and Meta Resumable Upload publishing.

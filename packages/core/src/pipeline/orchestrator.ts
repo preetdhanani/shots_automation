@@ -9,10 +9,22 @@ import type {
   WorkerSource,
 } from '../db/store.js';
 import { alignStoryboardWithWhisperAnchors, runWhisperAndAlign } from '../generation/aligner.js';
+import {
+  generateVeoBrollClip,
+  type GenerateBrollOptions,
+  type GenerateBrollResult,
+} from '../generation/broll.js';
 import { formatApiErrorMessage } from '../generation/geminiClient.js';
-import { resolveActiveLlmEndpoint } from '../generation/llmRegistry.js';
+import {
+  getDefaultAppSettingsFromEnv,
+  resolveActiveLlmEndpoint,
+} from '../generation/llmRegistry.js';
 import { generateStoryboard } from '../generation/scriptGenerator.js';
-import { synthesizeSampleVoiceMacOS, synthesizeVoiceWithGemini } from '../generation/tts.js';
+import {
+  synthesizeSampleVoiceMacOS,
+  synthesizeVoiceWithGemini,
+  type SynthesizedVoiceResult,
+} from '../generation/tts.js';
 import { ensureGeneratedAudioAssets } from '../media/audioAssets.js';
 import {
   encodeDeliveryReel,
@@ -20,18 +32,36 @@ import {
   getAudioDurationMs,
   probeVideo,
 } from '../media/ffmpeg.js';
+import { buildSfxCuesForStoryboard } from '../media/musicLibrary.js';
+import {
+  fetchSourceVisual,
+  type FetchSourceVisualOptions,
+} from '../media/sourceVisuals.js';
 import { InstagramGraphPublisher } from '../publish/instagram.js';
 import type { PublishResult } from '../publish/publisher.js';
 import type { CaptionToken, ReelCaptionsFile, SceneTiming } from '../schemas/media.js';
-import { type ReelStoryboard, type VoiceName } from '../schemas/storyboard.js';
+import {
+  sanitizeAssetSegment,
+  type ReelAssetRef,
+  type ReelStoryboard,
+  type VoiceName,
+} from '../schemas/storyboard.js';
 import { computeNarrationHash, computeStoryboardVisualHash } from '../schemas/hashes.js';
 import type { LocalAssetStorage } from '../storage/assets.js';
+import { computeReelFingerprint, type ReelFingerprint } from '../variety/fingerprint.js';
+import {
+  pickRotatedVoice,
+  planReelVariety,
+  type ReelVarietyPlan,
+} from '../variety/planner.js';
+import type { ReelFormatId } from '../variety/registry.js';
 import type { PipelineQueue } from './queue.js';
 import { SAMPLE_DEMO_STORYBOARD } from './sampleFixture.js';
 
 export type RenderVideoCallback = (opts: {
   cacheDirAbs: string;
   outputVideoPath: string;
+  assetDir?: string;
   props: {
     storyboard: ReelStoryboard;
     captions: CaptionToken[];
@@ -45,6 +75,19 @@ export type RenderVideoCallback = (opts: {
   onRenderProgress?: (pct: number, renderedFrames: number, totalFrames: number) => void;
 }) => Promise<void>;
 
+export type SynthesizeVoiceFn = (opts: {
+  env: AppEnv;
+  storyboard: ReelStoryboard;
+  voiceName: VoiceName;
+  workDir: string;
+  isSample: boolean;
+  signal?: AbortSignal;
+}) => Promise<SynthesizedVoiceResult>;
+
+export type FetchSourceVisualFn = (opts: FetchSourceVisualOptions) => Promise<ReelAssetRef | null>;
+
+export type GenerateBrollFn = (opts: GenerateBrollOptions) => Promise<GenerateBrollResult>;
+
 export interface OrchestratorDeps {
   env: AppEnv;
   getEnv?: () => AppEnv;
@@ -52,6 +95,9 @@ export interface OrchestratorDeps {
   storage: LocalAssetStorage;
   queue: PipelineQueue;
   renderVideo: RenderVideoCallback;
+  synthesizeVoice?: SynthesizeVoiceFn;
+  fetchSourceVisual?: FetchSourceVisualFn;
+  generateBroll?: GenerateBrollFn;
   workerSource?: WorkerSource;
 }
 
@@ -62,6 +108,9 @@ export class ReelOrchestrator {
   private readonly storage: LocalAssetStorage;
   private readonly queue: PipelineQueue;
   private readonly renderVideo: RenderVideoCallback;
+  private readonly synthesizeVoiceFn: SynthesizeVoiceFn;
+  private readonly fetchSourceVisualFn: FetchSourceVisualFn;
+  private readonly generateBrollFn: GenerateBrollFn;
   private readonly workerSource: WorkerSource;
 
   constructor(deps: OrchestratorDeps) {
@@ -71,6 +120,24 @@ export class ReelOrchestrator {
     this.storage = deps.storage;
     this.queue = deps.queue;
     this.renderVideo = deps.renderVideo;
+    this.synthesizeVoiceFn =
+      deps.synthesizeVoice ??
+      (async (opts) =>
+        opts.isSample
+          ? synthesizeSampleVoiceMacOS({
+              storyboard: opts.storyboard,
+              workDir: opts.workDir,
+              signal: opts.signal,
+            })
+          : synthesizeVoiceWithGemini({
+              env: opts.env,
+              storyboard: opts.storyboard,
+              voiceName: opts.voiceName,
+              workDir: opts.workDir,
+              signal: opts.signal,
+            }));
+    this.fetchSourceVisualFn = deps.fetchSourceVisual ?? fetchSourceVisual;
+    this.generateBrollFn = deps.generateBroll ?? generateVeoBrollClip;
     this.workerSource = deps.workerSource ?? 'server';
   }
 
@@ -80,29 +147,49 @@ export class ReelOrchestrator {
 
   private getEffectiveSettings() {
     const env = this.currentEnv;
-    return this.store.getSettings({
-      defaultVoice: env.GEMINI_TTS_VOICE,
-      brandHandle: env.BRAND_HANDLE,
-      musicEnabled: true,
-      musicVolumeDb: -22,
-      activeLlmEndpointId: null,
-    });
+    return this.store.getSettings(getDefaultAppSettingsFromEnv(env));
+  }
+
+  private getRecentVarietyHistory(excludeReelId?: string): ReelFingerprint[] {
+    return this.store
+      .listRecentReelsForVariety(12)
+      .filter((r) => r.id !== excludeReelId)
+      .map((r) => computeReelFingerprint(r));
   }
 
   startGenerateFromTopic(opts: {
     topic: TopicRecord;
-    voiceName?: VoiceName;
+    format?: ReelFormatId | 'auto';
+    voiceName?: VoiceName | 'auto';
     musicEnabled?: boolean;
     llmEndpointId?: string;
+    seed?: number;
   }): { reel: ReelRecord; run: PipelineRunRecord } {
     const settings = this.getEffectiveSettings();
-    const voiceName = opts.voiceName ?? settings.defaultVoice;
+    const history = this.getRecentVarietyHistory();
+
+    // Plan variety & voice synchronously before creating the reel row so parallel
+    // queued jobs immediately observe this reel's format/style/voice and never collide.
+    const varietyPlan = planReelVariety({
+      pillar: opts.topic.pillar,
+      history,
+      requestedFormat: opts.format,
+      seed: opts.seed,
+    });
+
+    const voiceName: VoiceName =
+      opts.voiceName === 'auto' || (!opts.voiceName && settings.voiceRotation)
+        ? pickRotatedVoice(history, settings.defaultVoice)
+        : (opts.voiceName ?? settings.defaultVoice);
     const musicEnabled = opts.musicEnabled ?? settings.musicEnabled;
 
     const placeholderStoryboard: ReelStoryboard = {
       ...SAMPLE_DEMO_STORYBOARD,
       title: opts.topic.title.slice(0, 120),
       pillar: opts.topic.pillar,
+      format: varietyPlan.format,
+      hookStyle: varietyPlan.hookStyle,
+      style: varietyPlan.style,
       sources: [{ title: opts.topic.sourceName, url: opts.topic.sourceUrl }],
     };
 
@@ -132,6 +219,8 @@ export class ReelOrchestrator {
           runId,
           reelId: reel.id,
           topic: opts.topic,
+          varietyPlan,
+          varietyHistory: history,
           voiceName,
           musicEnabled,
           isSample: false,
@@ -253,6 +342,7 @@ export class ReelOrchestrator {
             runId,
             reelId,
             stagingDir,
+            assetDir: this.storage.getReelDir(reelId),
             storyboard: currentReel.storyboard,
             captionsFile,
             voice48kPath: voice48k,
@@ -310,19 +400,14 @@ export class ReelOrchestrator {
               : `Generating Gemini TTS voiceover (${currentReel.voiceName})...`,
           );
 
-          const voiceRes = currentReel.isSample
-            ? await synthesizeSampleVoiceMacOS({
-                storyboard: currentReel.storyboard,
-                workDir: stagingDir,
-                signal,
-              })
-            : await synthesizeVoiceWithGemini({
-                env: this.currentEnv,
-                storyboard: currentReel.storyboard,
-                voiceName: currentReel.voiceName,
-                workDir: stagingDir,
-                signal,
-              });
+          const voiceRes = await this.synthesizeVoiceFn({
+            env: this.currentEnv,
+            storyboard: currentReel.storyboard,
+            voiceName: currentReel.voiceName,
+            workDir: stagingDir,
+            isSample: currentReel.isSample,
+            signal,
+          });
 
           this.queue.updateProgress(runId, 'align', 38, 'Aligning word-level timestamps...');
           const captionsFile = await runWhisperAndAlign({
@@ -346,6 +431,7 @@ export class ReelOrchestrator {
             runId,
             reelId,
             stagingDir,
+            assetDir: this.storage.getReelDir(reelId),
             storyboard: currentReel.storyboard,
             captionsFile,
             voice48kPath: voiceRes.voice48kPath,
@@ -384,6 +470,15 @@ export class ReelOrchestrator {
       throw new Error(`Only FAILED reels can be retried (current status: ${reel.status}).`);
     }
     const topic = reel.topicId ? this.store.getTopic(reel.topicId) : null;
+    const history = this.getRecentVarietyHistory(reelId);
+    const varietyPlan = reel.isSample
+      ? undefined
+      : planReelVariety({
+          pillar: topic?.pillar ?? reel.pillar,
+          history,
+          requestedFormat: reel.storyboard.format,
+        });
+
     this.store.updateReel(reelId, { status: 'GENERATING', errorMessage: null });
 
     return this.queue.createAndEnqueueRender({
@@ -398,6 +493,8 @@ export class ReelOrchestrator {
           reelId,
           topic,
           existingStoryboard: reel.isSample ? reel.storyboard : undefined,
+          varietyPlan,
+          varietyHistory: history,
           voiceName: reel.voiceName,
           musicEnabled: reel.musicEnabled,
           isSample: reel.isSample,
@@ -484,11 +581,84 @@ export class ReelOrchestrator {
     });
   }
 
+  private async enrichStoryboardAssets(opts: {
+    runId: string;
+    storyboard: ReelStoryboard;
+    topic: TopicRecord | null;
+    stagingDir: string;
+    brollEnabled: boolean;
+    signal: AbortSignal;
+  }): Promise<ReelStoryboard> {
+    const assets: Record<string, ReelAssetRef> = { ...(opts.storyboard.assets ?? {}) };
+    let scenes = [...opts.storyboard.scenes];
+    let changed = false;
+
+    const hasSourceSpotlight = scenes.some((s) => s.type === 'source_spotlight');
+    const sourceUrl = opts.topic?.sourceUrl || opts.storyboard.sources[0]?.url;
+    if (hasSourceSpotlight && sourceUrl) {
+      this.queue.updateProgress(opts.runId, 'script', 16, 'Fetching source visual...');
+      const fetched = await this.fetchSourceVisualFn({
+        url: sourceUrl,
+        outDir: opts.stagingDir,
+        filename: 'source-visual.jpg',
+        signal: opts.signal,
+      });
+      if (fetched) {
+        assets.source = fetched;
+        scenes = scenes.map((s) =>
+          s.type === 'source_spotlight' ? { ...s, imageAsset: 'source' } : s,
+        );
+        changed = true;
+      }
+    }
+
+    if (opts.brollEnabled) {
+      const brollScene = scenes.find((s) => s.type === 'ai_media_clip');
+      if (brollScene && brollScene.type === 'ai_media_clip') {
+        this.queue.updateProgress(opts.runId, 'script', 20, 'Generating AI B-roll clip via Veo...');
+        const brollRes = await this.generateBrollFn({
+          env: this.currentEnv,
+          sceneId: brollScene.id,
+          prompt: brollScene.prompt,
+          outDir: opts.stagingDir,
+          durationSec: brollScene.durationHintSec,
+          signal: opts.signal,
+        });
+        if (brollRes.asset) {
+          const assetKey = `broll_${sanitizeAssetSegment(brollScene.id)}`;
+          assets[assetKey] = brollRes.asset;
+          scenes = scenes.map((s) =>
+            s.id === brollScene.id && s.type === 'ai_media_clip'
+              ? { ...s, videoAsset: assetKey }
+              : s,
+          );
+          changed = true;
+        } else if (brollRes.warning) {
+          this.queue.updateProgress(opts.runId, 'script', 22, brollRes.warning, {
+            level: 'warn',
+          });
+        }
+      }
+    }
+
+    if (!changed) {
+      return opts.storyboard;
+    }
+
+    return {
+      ...opts.storyboard,
+      assets,
+      scenes,
+    };
+  }
+
   private async executeFullGeneration(opts: {
     runId: string;
     reelId: string;
     topic: TopicRecord | null;
     existingStoryboard?: ReelStoryboard;
+    varietyPlan?: ReelVarietyPlan;
+    varietyHistory?: ReelFingerprint[];
     voiceName: VoiceName;
     musicEnabled: boolean;
     isSample: boolean;
@@ -506,17 +676,38 @@ export class ReelOrchestrator {
           throw new Error('Topic is required to generate a new storyboard.');
         }
         const { active: endpoint } = resolveActiveLlmEndpoint(this.store, env, opts.llmEndpointId);
+        const history = opts.varietyHistory ?? this.getRecentVarietyHistory(opts.reelId);
+        const varietyPlan =
+          opts.varietyPlan ??
+          planReelVariety({
+            pillar: opts.topic.pillar,
+            history,
+          });
+
         this.queue.updateProgress(
           opts.runId,
           'script',
           10,
-          `Writing storyboard with ${endpoint.name} (${endpoint.model})...`,
+          `Writing ${varietyPlan.format} storyboard with ${endpoint.name} (${endpoint.model})...`,
         );
         storyboard = await generateStoryboard(env, endpoint, {
           topic: opts.topic,
           brandHandle: settings.brandHandle,
+          varietyPlan,
+          history,
+          brollEnabled: settings.aiBrollEnabled,
           signal: opts.signal,
         });
+
+        storyboard = await this.enrichStoryboardAssets({
+          runId: opts.runId,
+          storyboard,
+          topic: opts.topic,
+          stagingDir,
+          brollEnabled: settings.aiBrollEnabled,
+          signal: opts.signal,
+        });
+
         this.store.updateReel(opts.reelId, {
           title: storyboard.title,
           pillar: storyboard.pillar,
@@ -540,19 +731,14 @@ export class ReelOrchestrator {
           : `Generating Gemini TTS voiceover (${opts.voiceName})...`,
       );
 
-      const voiceRes = opts.isSample
-        ? await synthesizeSampleVoiceMacOS({
-            storyboard,
-            workDir: stagingDir,
-            signal: opts.signal,
-          })
-        : await synthesizeVoiceWithGemini({
-            env,
-            storyboard,
-            voiceName: opts.voiceName,
-            workDir: stagingDir,
-            signal: opts.signal,
-          });
+      const voiceRes = await this.synthesizeVoiceFn({
+        env,
+        storyboard,
+        voiceName: opts.voiceName,
+        workDir: stagingDir,
+        isSample: opts.isSample,
+        signal: opts.signal,
+      });
 
       this.queue.updateProgress(
         opts.runId,
@@ -575,10 +761,30 @@ export class ReelOrchestrator {
         JSON.stringify(captionsFile, null, 2),
       );
 
+      const promoteMappings: Array<{ stagedName: string; targetName: string }> = [
+        { stagedName: 'storyboard.json', targetName: 'storyboard.json' },
+        { stagedName: 'voice-raw.bin', targetName: 'voice-raw.bin' },
+        { stagedName: 'voice-trimmed.wav', targetName: 'voice-trimmed.wav' },
+        { stagedName: 'voice-48k.wav', targetName: 'voice-48k.wav' },
+        { stagedName: 'voice-16k.wav', targetName: 'voice-16k.wav' },
+        { stagedName: 'captions.json', targetName: 'captions.json' },
+        { stagedName: 'final.mp4', targetName: 'final.mp4' },
+        { stagedName: 'cover.jpg', targetName: 'cover.jpg' },
+      ];
+
+      // Dynamically include any staged visual/video assets created during this run
+      for (const ref of Object.values(storyboard.assets ?? {})) {
+        const stagedAssetPath = path.join(stagingDir, ref.file);
+        if (fs.existsSync(stagedAssetPath)) {
+          promoteMappings.push({ stagedName: ref.file, targetName: ref.file });
+        }
+      }
+
       await this.renderAndFinalizeFromAudio({
         runId: opts.runId,
         reelId: opts.reelId,
         stagingDir,
+        assetDir: stagingDir,
         storyboard,
         captionsFile,
         voice48kPath: voiceRes.voice48kPath,
@@ -588,16 +794,7 @@ export class ReelOrchestrator {
         musicVolumeDb: settings.musicVolumeDb,
         narrationHash: computeNarrationHash(storyboard),
         renderedVoiceName: opts.voiceName,
-        promoteMappings: [
-          { stagedName: 'storyboard.json', targetName: 'storyboard.json' },
-          { stagedName: 'voice-raw.bin', targetName: 'voice-raw.bin' },
-          { stagedName: 'voice-trimmed.wav', targetName: 'voice-trimmed.wav' },
-          { stagedName: 'voice-48k.wav', targetName: 'voice-48k.wav' },
-          { stagedName: 'voice-16k.wav', targetName: 'voice-16k.wav' },
-          { stagedName: 'captions.json', targetName: 'captions.json' },
-          { stagedName: 'final.mp4', targetName: 'final.mp4' },
-          { stagedName: 'cover.jpg', targetName: 'cover.jpg' },
-        ],
+        promoteMappings,
         signal: opts.signal,
       });
     } catch (err) {
@@ -613,6 +810,7 @@ export class ReelOrchestrator {
     runId: string;
     reelId: string;
     stagingDir: string;
+    assetDir: string;
     storyboard: ReelStoryboard;
     captionsFile: ReelCaptionsFile;
     voice48kPath: string;
@@ -634,6 +832,7 @@ export class ReelOrchestrator {
     await this.renderVideo({
       cacheDirAbs: this.currentEnv.CACHE_DIR_ABS,
       outputVideoPath: remotionRawPath,
+      assetDir: opts.assetDir,
       props: {
         storyboard: opts.storyboard,
         captions: opts.captionsFile.captions,
@@ -663,8 +862,17 @@ export class ReelOrchestrator {
 
     this.queue.updateProgress(opts.runId, 'encode', 84, 'Mixing audio & encoding Meta-spec MP4...');
 
-    const audioAssets = ensureGeneratedAudioAssets(this.storage.musicDir);
-    const transitionOffsetsMs = opts.captionsFile.sceneTimings.slice(1).map((t) => t.startMs);
+    const musicMood = opts.storyboard.style?.musicMood ?? 'dark_pad';
+    const seed = opts.storyboard.style?.seed ?? 0;
+    const audioAssets = ensureGeneratedAudioAssets(this.storage.musicDir, {
+      mood: musicMood,
+      seed,
+    });
+    const sfxCues = buildSfxCuesForStoryboard(
+      opts.storyboard,
+      opts.captionsFile.sceneTimings,
+      audioAssets.sfx,
+    );
 
     await encodeDeliveryReel({
       rawVideoPath: remotionRawPath,
@@ -674,8 +882,7 @@ export class ReelOrchestrator {
       musicEnabled: opts.musicEnabled,
       musicPath: audioAssets.ambientPadPath,
       musicVolumeDb: opts.musicVolumeDb,
-      transitionClickPath: audioAssets.transitionClickPath,
-      transitionOffsetsMs,
+      sfxCues,
       signal: opts.signal,
     });
 

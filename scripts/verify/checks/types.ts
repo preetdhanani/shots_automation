@@ -12,8 +12,11 @@ export interface VerifyCheckContext {
   driver: VerifyDriver;
   harness: VerifyHarness;
   liveMode: boolean;
+  workspaceRoot: string;
+  shotsDir: string;
   recordAssertion: (label: string) => void;
   captureScreenshot: (name: string, caption: string, opts?: { fullPage?: boolean }) => Promise<void>;
+  attachImage: (name: string, sourceFilePath: string, caption: string) => void;
 }
 
 export interface VerifyCheck {

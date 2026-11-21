@@ -1,5 +1,4 @@
-import { createChannelOutroScene } from '../generation/scriptGenerator.js';
-import type { ReelStoryboard } from '../schemas/storyboard.js';
+import { createChannelOutroScene, type ReelStoryboard } from '../schemas/storyboard.js';
 
 export const SAMPLE_DEMO_STORYBOARD: ReelStoryboard = {
   title: 'Why Coding Harnesses Beat Prompt Stuffing',

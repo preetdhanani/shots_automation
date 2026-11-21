@@ -11,7 +11,7 @@ export const checkApprovalStudioAndPublish: VerifyCheck = {
 
     await ctx.driver.goto(targetPath);
     await ctx.driver.waitForText('Approve & Publish');
-    await ctx.driver.waitForText('9:16 Preview');
+    await ctx.driver.waitForText('IG HUD');
     ctx.recordAssertion('Loaded Approval Studio with ready reel');
 
     // Verify PhonePreview video element and IG HUD Safe Zone toggle

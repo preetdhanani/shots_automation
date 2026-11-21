@@ -4,10 +4,18 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import {
+  BACKGROUND_IDS,
+  BACKGROUND_LABELS,
+  CAMERA_MOVE_IDS,
+  CAMERA_MOVE_LABELS,
+  CAPTION_STYLE_IDS,
+  CAPTION_STYLE_LABELS,
   checkFfmpegAvailability,
   checkGeminiHealth,
   checkMetaHealth,
   checkOpenAICompatibleHealth,
+  computeFreshness,
+  computeReelFingerprint,
   computeStaleness,
   createCustomTopic,
   ensureWhisperModelDownloaded,
@@ -18,15 +26,30 @@ import {
   getVoicePreviewHash,
   getWhisperDownloadProgress,
   getWhisperSetupStatus,
+  HOOK_STYLE_IDS,
+  HOOK_STYLE_LABELS,
+  LAYOUT_LABELS,
+  MUSIC_MOOD_IDS,
+  MUSIC_MOOD_LABELS,
   normalizeOpenAIBaseUrl,
+  PALETTE_IDS,
+  PALETTE_LABELS,
   PillarSchema,
+  REEL_FORMAT_LIST,
+  ReelFormatIdSchema,
   ReelStoryboardSchema,
   reloadDotEnv,
   RESERVED_LLM_ENDPOINT_IDS,
   resolveActiveLlmEndpoint,
   resolveAllLlmEndpoints,
+  restyleStoryboard,
+  SCENE_LAYOUTS,
   subscribeWhisperProgress,
   toPublicLlmEndpoint,
+  TRANSITION_IDS,
+  TRANSITION_LABELS,
+  TYPOGRAPHY_IDS,
+  TYPOGRAPHY_LABELS,
   validateApiKeyValue,
   validateStoryboardEditorial,
   VoiceNameSchema,
@@ -37,6 +60,7 @@ import {
   type PipelineRunRecord,
   type ReelCaptionsFile,
   type ReelOrchestrator,
+  type ReelRecord,
   type ReelStatus,
   type RunStreamEvent,
   type Store,
@@ -582,6 +606,8 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       musicEnabled: z.boolean().optional(),
       musicVolumeDb: z.number().min(-40).max(-6).optional(),
       activeLlmEndpointId: z.string().trim().min(1).nullable().optional(),
+      aiBrollEnabled: z.boolean().optional(),
+      voiceRotation: z.boolean().optional(),
     });
     const body = await c.req.json().catch(() => null);
     const parsed = PatchSettingsSchema.safeParse(body);
@@ -596,6 +622,33 @@ export function createServerApp(deps: ServerAppDeps): Hono {
     }
     const updated = deps.store.updateSettings(parsed.data, defaultAppSettings());
     return c.json({ settings: updated });
+  });
+
+  // Video Variety registries & recent fingerprints
+  app.get('/api/variety', (c) => {
+    const recentFingerprints = deps.store
+      .listRecentReelsForVariety(12)
+      .map((r) => computeReelFingerprint(r));
+
+    return c.json({
+      formats: REEL_FORMAT_LIST.map((f) => ({
+        id: f.id,
+        label: f.label,
+        description: f.description,
+        sceneCount: f.sceneCount,
+      })),
+      hookStyles: HOOK_STYLE_IDS.map((id) => ({ id, label: HOOK_STYLE_LABELS[id] })),
+      sceneLayouts: SCENE_LAYOUTS,
+      layoutLabels: LAYOUT_LABELS,
+      transitions: TRANSITION_IDS.map((id) => ({ id, label: TRANSITION_LABELS[id] })),
+      cameras: CAMERA_MOVE_IDS.map((id) => ({ id, label: CAMERA_MOVE_LABELS[id] })),
+      backgrounds: BACKGROUND_IDS.map((id) => ({ id, label: BACKGROUND_LABELS[id] })),
+      typographies: TYPOGRAPHY_IDS.map((id) => ({ id, label: TYPOGRAPHY_LABELS[id] })),
+      captionStyles: CAPTION_STYLE_IDS.map((id) => ({ id, label: CAPTION_STYLE_LABELS[id] })),
+      palettes: PALETTE_IDS.map((id) => ({ id, label: PALETTE_LABELS[id] })),
+      musicMoods: MUSIC_MOOD_IDS.map((id) => ({ id, label: MUSIC_MOOD_LABELS[id] })),
+      recentFingerprints,
+    });
   });
 
   // Topics
@@ -675,6 +728,16 @@ export function createServerApp(deps: ServerAppDeps): Hono {
     return c.json({ reels: enriched });
   });
 
+  const computeReelVarietyInfo = (reel: ReelRecord) => {
+    const fingerprint = computeReelFingerprint(reel);
+    const recentPeers = deps.store
+      .listRecentReelsForVariety(15)
+      .filter((r) => r.id !== reel.id)
+      .map((r) => computeReelFingerprint(r));
+    const freshness = computeFreshness(fingerprint, recentPeers);
+    return { fingerprint, freshness };
+  };
+
   app.get('/api/reels/:id', (c) => {
     const id = c.req.param('id');
     const reel = deps.store.getReel(id);
@@ -685,6 +748,7 @@ export function createServerApp(deps: ServerAppDeps): Hono {
     const activeRun = deps.store.getLatestRunForReel(reel.id);
     const settings = deps.store.getSettings(defaultAppSettings());
     const staleness = computeStaleness(reel, settings.brandHandle);
+    const variety = computeReelVarietyInfo(reel);
 
     let captionsFile: ReelCaptionsFile | null = null;
     try {
@@ -708,6 +772,7 @@ export function createServerApp(deps: ServerAppDeps): Hono {
           : null,
       latestRun: activeRun,
       staleness,
+      variety,
     });
   });
 
@@ -717,9 +782,11 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       prompt: z.string().trim().optional(),
       url: z.string().trim().optional(),
       pillar: PillarSchema.optional(),
-      voiceName: VoiceNameSchema.optional(),
+      format: z.union([ReelFormatIdSchema, z.literal('auto')]).optional(),
+      voiceName: z.union([VoiceNameSchema, z.literal('auto')]).optional(),
       musicEnabled: z.boolean().optional(),
       llmEndpointId: z.string().trim().min(1).optional(),
+      seed: z.number().int().optional(),
     });
     const body = await c.req.json().catch(() => null);
     const parsed = GenerateSchema.safeParse(body);
@@ -777,9 +844,11 @@ export function createServerApp(deps: ServerAppDeps): Hono {
 
     const { reel, run } = deps.orchestrator.startGenerateFromTopic({
       topic,
+      format: parsed.data.format,
       voiceName: parsed.data.voiceName,
       musicEnabled: parsed.data.musicEnabled,
       llmEndpointId: selectedEndpoint.id,
+      seed: parsed.data.seed,
     });
     return c.json({ reel, run, topic }, 202);
   });
@@ -818,8 +887,19 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       return c.json({ error: parsed.error.issues[0]?.message ?? 'Invalid reel update' }, 400);
     }
 
-    if (parsed.data.storyboard) {
-      const editorial = validateStoryboardEditorial(parsed.data.storyboard);
+    const settings = deps.store.getSettings(defaultAppSettings());
+    let nextStoryboard = parsed.data.storyboard;
+
+    if (nextStoryboard) {
+      // Preserve server-managed assets map (prevent client-injected arbitrary filenames)
+      nextStoryboard = {
+        ...nextStoryboard,
+        ...(existing.storyboard.assets ? { assets: existing.storyboard.assets } : { assets: undefined }),
+      };
+      const allowAiMediaClip =
+        settings.aiBrollEnabled ||
+        existing.storyboard.scenes.some((s) => s.type === 'ai_media_clip');
+      const editorial = validateStoryboardEditorial(nextStoryboard, { allowAiMediaClip });
       if (!editorial.ok) {
         return c.json({ error: editorial.errors.join(' ') }, 400);
       }
@@ -831,14 +911,46 @@ export function createServerApp(deps: ServerAppDeps): Hono {
       hashtags: parsed.data.hashtags,
       voiceName: parsed.data.voiceName,
       musicEnabled: parsed.data.musicEnabled,
-      storyboard: parsed.data.storyboard,
-      pillar: parsed.data.storyboard?.pillar,
+      storyboard: nextStoryboard,
+      pillar: nextStoryboard?.pillar,
     });
     if (!updated) return c.json({ error: 'Reel not found' }, 404);
-    const settings = deps.store.getSettings(defaultAppSettings());
     return c.json({
       reel: updated,
       staleness: computeStaleness(updated, settings.brandHandle),
+      variety: computeReelVarietyInfo(updated),
+    });
+  });
+
+  app.post('/api/reels/:id/restyle', async (c) => {
+    const id = c.req.param('id');
+    const existing = deps.store.getReel(id);
+    if (!existing) return c.json({ error: 'Reel not found' }, 404);
+    if (['GENERATING', 'PUBLISHING', 'PUBLISHED'].includes(existing.status)) {
+      return c.json({ error: `Cannot restyle reel while status is "${existing.status}".` }, 409);
+    }
+
+    const RestyleSchema = z.object({
+      seed: z.number().int().optional(),
+    });
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = RestyleSchema.safeParse(body);
+    const seed = parsed.success ? parsed.data.seed : undefined;
+
+    const history = deps.store
+      .listRecentReelsForVariety(12)
+      .filter((r) => r.id !== existing.id)
+      .map((r) => computeReelFingerprint(r));
+
+    const nextStoryboard = restyleStoryboard(existing.storyboard, history, seed);
+    const updated = deps.store.updateReel(id, { storyboard: nextStoryboard });
+    if (!updated) return c.json({ error: 'Reel not found' }, 404);
+    const settings = deps.store.getSettings(defaultAppSettings());
+
+    return c.json({
+      reel: updated,
+      staleness: computeStaleness(updated, settings.brandHandle),
+      variety: computeReelVarietyInfo(updated),
     });
   });
 

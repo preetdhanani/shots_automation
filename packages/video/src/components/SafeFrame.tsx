@@ -1,7 +1,9 @@
 import React from 'react';
-import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
-import { FONT_FAMILIES, PILLAR_THEMES, SAFE_ZONE } from '../theme.js';
+import { AbsoluteFill } from 'remotion';
 import type { ContentPillar } from '@post/core';
+import { useReelStyle } from '../style/ReelStyleContext.js';
+import { SAFE_ZONE } from '../theme.js';
+import { BackgroundRenderer } from './backgrounds/BackgroundRenderer.js';
 
 interface SafeFrameProps {
   pillar: ContentPillar;
@@ -12,51 +14,23 @@ interface SafeFrameProps {
 }
 
 export const SafeFrame: React.FC<SafeFrameProps> = ({
-  pillar,
   brandHandle,
   sceneIndex,
   totalScenes,
   children,
 }) => {
-  const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
-  const theme = PILLAR_THEMES[pillar];
-
-  const drift = interpolate(frame, [0, Math.max(1, durationInFrames)], [0, 36], {
-    extrapolateRight: 'clamp',
-  });
+  const { palette, fonts } = useReelStyle();
 
   return (
     <AbsoluteFill
       style={{
-        backgroundColor: '#09090B',
+        backgroundColor: palette.bgBase,
         color: '#F4F4F5',
-        fontFamily: FONT_FAMILIES.sans,
+        fontFamily: fonts.sans,
         overflow: 'hidden',
       }}
     >
-      {/* Ambient radial obsidian studio glow */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: -120,
-          background: `radial-gradient(circle at ${28 + drift * 0.25}% ${22 + drift * 0.15}%, ${theme.glow} 0%, rgba(9, 9, 11, 0) 54%), radial-gradient(circle at 82% 76%, rgba(59, 130, 246, 0.10) 0%, rgba(9, 9, 11, 0) 48%)`,
-          pointerEvents: 'none',
-        }}
-      />
-
-      {/* Subtle developer dot grid */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          backgroundImage:
-            'radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px)',
-          backgroundSize: '36px 36px',
-          opacity: 0.42,
-          pointerEvents: 'none',
-        }}
-      />
+      <BackgroundRenderer />
 
       {/* Top safe-zone micro header */}
       <div
@@ -69,6 +43,7 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 16,
+          zIndex: 5,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -77,25 +52,25 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
               width: 10,
               height: 10,
               borderRadius: 999,
-              backgroundColor: theme.accent,
-              boxShadow: `0 0 12px ${theme.accent}`,
+              backgroundColor: palette.accent,
+              boxShadow: `0 0 12px ${palette.accent}`,
             }}
           />
           <span
             style={{
-              fontFamily: FONT_FAMILIES.mono,
+              fontFamily: fonts.mono,
               fontSize: 20,
               fontWeight: 600,
               letterSpacing: '0.08em',
-              color: theme.accent,
+              color: palette.accent,
             }}
           >
-            {theme.label}
+            {palette.label}
           </span>
           {brandHandle ? (
             <span
               style={{
-                fontFamily: FONT_FAMILIES.mono,
+                fontFamily: fonts.mono,
                 fontSize: 20,
                 color: '#A1A1AA',
                 marginLeft: 6,
@@ -116,7 +91,7 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
                 height: 6,
                 borderRadius: 999,
                 backgroundColor:
-                  idx <= sceneIndex ? theme.accent : 'rgba(255, 255, 255, 0.16)',
+                  idx <= sceneIndex ? palette.accent : 'rgba(255, 255, 255, 0.16)',
                 opacity: idx < sceneIndex ? 0.65 : 1,
               }}
             />
@@ -124,7 +99,7 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
         </div>
       </div>
 
-      {/* Main non-overlapping content safe zone (y=200..1400, x=64..930) */}
+      {/* Main non-overlapping content safe zone (y=200..1390, x=76..944) */}
       <div
         style={{
           position: 'absolute',
@@ -135,6 +110,7 @@ export const SafeFrame: React.FC<SafeFrameProps> = ({
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
+          zIndex: 3,
         }}
       >
         {children}

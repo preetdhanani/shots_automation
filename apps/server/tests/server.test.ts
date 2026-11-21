@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  computeNarrationHash,
+  computeStoryboardVisualHash,
   loadEnv,
   LocalAssetStorage,
   PipelineQueue,
@@ -361,5 +363,101 @@ describe('Hono Server API Security, Range Streaming, Staleness, and Lifecycle', 
       await mockTarget.close();
       await attackerServer.close();
     }
+  });
+
+  it('serves /api/variety, persists aiBrollEnabled/voiceRotation settings, and restyles reels cleanly', async () => {
+    const app = setupApp({ GEMINI_API_KEY: 'test-key' });
+    const headers = {
+      Host: '127.0.0.1:4310',
+      'X-Post-CSRF': '1',
+      'Content-Type': 'application/json',
+    };
+
+    const varietyRes = await app.request('/api/variety', {
+      headers: { Host: '127.0.0.1:4310' },
+    });
+    expect(varietyRes.status).toBe(200);
+    const varietyJson = (await varietyRes.json()) as {
+      formats: Array<{ id: string }>;
+      backgrounds: Array<{ id: string }>;
+      musicMoods: Array<{ id: string }>;
+    };
+    expect(varietyJson.formats.length).toBe(8);
+    expect(varietyJson.backgrounds.length).toBe(6);
+    expect(varietyJson.musicMoods.length).toBe(5);
+
+    const patchSettings = await app.request('/api/settings', {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ voiceRotation: true, aiBrollEnabled: true }),
+    });
+    expect(patchSettings.status).toBe(200);
+    const settingsJson = (await patchSettings.json()) as {
+      settings: { voiceRotation: boolean; aiBrollEnabled: boolean };
+    };
+    expect(settingsJson.settings.voiceRotation).toBe(true);
+    expect(settingsJson.settings.aiBrollEnabled).toBe(true);
+
+    // Create a rendered READY_FOR_REVIEW reel and test POST /api/reels/:id/restyle
+    const readyReel = store.createReel({
+      topicId: null,
+      pillar: 'harnesses',
+      status: 'READY_FOR_REVIEW',
+      title: 'Ready Reel For Restyle',
+      storyboard: SAMPLE_DEMO_STORYBOARD,
+      caption: SAMPLE_DEMO_STORYBOARD.caption,
+      hashtags: SAMPLE_DEMO_STORYBOARD.hashtags,
+      voiceName: 'Puck',
+      musicEnabled: true,
+    });
+    store.updateReel(readyReel.id, {
+      renderedNarrationHash: computeNarrationHash(SAMPLE_DEMO_STORYBOARD),
+      renderedVoiceName: 'Puck',
+      renderedStoryboardHash: computeStoryboardVisualHash(
+        SAMPLE_DEMO_STORYBOARD,
+        true,
+        '@ai.dev.reels',
+      ),
+    });
+    const detailRes = await app.request(`/api/reels/${readyReel.id}`, {
+      headers: { Host: '127.0.0.1:4310' },
+    });
+    expect(detailRes.status).toBe(200);
+    const detailJson = (await detailRes.json()) as {
+      variety?: { freshness: { score: number } };
+    };
+    expect(detailJson.variety?.freshness.score).toBe(100);
+
+    const restyleRes = await app.request(`/api/reels/${readyReel.id}/restyle`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ seed: 12345 }),
+    });
+    expect(restyleRes.status).toBe(200);
+    const restyleJson = (await restyleRes.json()) as {
+      reel: { storyboard: { style?: { background: string } } };
+      staleness: { visualsDirty: boolean };
+    };
+    expect(restyleJson.reel.storyboard.style?.background).toBeTruthy();
+    expect(restyleJson.staleness.visualsDirty).toBe(true);
+
+    // Published reels cannot be restyled (409)
+    const publishedReel = store.createReel({
+      topicId: null,
+      pillar: 'harnesses',
+      status: 'PUBLISHED',
+      title: 'Published Reel Locked',
+      storyboard: SAMPLE_DEMO_STORYBOARD,
+      caption: SAMPLE_DEMO_STORYBOARD.caption,
+      hashtags: SAMPLE_DEMO_STORYBOARD.hashtags,
+      voiceName: 'Puck',
+      musicEnabled: true,
+    });
+    const lockedRes = await app.request(`/api/reels/${publishedReel.id}/restyle`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({}),
+    });
+    expect(lockedRes.status).toBe(409);
   });
 });

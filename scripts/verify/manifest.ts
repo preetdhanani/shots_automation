@@ -64,6 +64,22 @@ export const VERIFICATION_MANIFEST: readonly VerificationFeatureEntry[] = [
     views: ['LibraryView.tsx'],
     components: [],
   },
+  {
+    checkId: '07-video-variety',
+    checkFile: '07-video-variety.ts',
+    title: 'Video Variety Engine, Anti-Repeat Planner, Variety Panel, Restyle & Formats UI',
+    routes: ['/review/:id', '/discover', '/settings'],
+    views: [],
+    components: ['VarietyPanel.tsx'],
+  },
+  {
+    checkId: '08-remotion-visual-variety',
+    checkFile: '08-remotion-visual-variety.ts',
+    title: 'Real Remotion Still Renders: All 16 Scenes x Layouts, Backgrounds, Transitions, Captions, Typographies & Formats',
+    routes: [],
+    views: [],
+    components: [],
+  },
 ];
 
 /**

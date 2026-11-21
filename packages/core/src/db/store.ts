@@ -111,6 +111,8 @@ export interface AppSettings {
   musicEnabled: boolean;
   musicVolumeDb: number;
   activeLlmEndpointId: string | null;
+  aiBrollEnabled: boolean;
+  voiceRotation: boolean;
 }
 
 export interface LlmEndpointRecord {
@@ -216,6 +218,7 @@ export interface Store {
   countReelsByPillarSince(sinceIso: string): Record<ContentPillar, number>;
 
   listReels(opts?: { statuses?: ReelStatus[]; limit?: number }): ReelRecord[];
+  listRecentReelsForVariety(limit?: number): ReelRecord[];
   getReel(id: string): ReelRecord | null;
   createReel(input: CreateReelInput): ReelRecord;
   updateReel(id: string, input: UpdateReelInput): ReelRecord | null;
@@ -743,6 +746,18 @@ export class SqliteStore implements Store {
     return rows.map((r) => this.mapReelRow(r));
   }
 
+  listRecentReelsForVariety(limit = 12): ReelRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM reels
+         WHERE is_sample = 0 AND status NOT IN ('FAILED', 'REJECTED')
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?`,
+      )
+      .all(limit) as Record<string, unknown>[];
+    return rows.map((r) => this.mapReelRow(r));
+  }
+
   getReel(id: string): ReelRecord | null {
     const row = this.db.prepare('SELECT * FROM reels WHERE id = ?').get(id) as
       Record<string, unknown> | undefined;
@@ -1082,6 +1097,14 @@ export class SqliteStore implements Store {
           ? (map.get('musicVolumeDb') as number)
           : defaults.musicVolumeDb,
       activeLlmEndpointId,
+      aiBrollEnabled:
+        typeof map.get('aiBrollEnabled') === 'boolean'
+          ? (map.get('aiBrollEnabled') as boolean)
+          : defaults.aiBrollEnabled,
+      voiceRotation:
+        typeof map.get('voiceRotation') === 'boolean'
+          ? (map.get('voiceRotation') as boolean)
+          : defaults.voiceRotation,
     };
   }
 

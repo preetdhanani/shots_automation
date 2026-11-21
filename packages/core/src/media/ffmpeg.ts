@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { VideoSpecReport } from '../schemas/media.js';
+import type { AudioSfxCue } from './musicLibrary.js';
 import { runSubprocess } from './subprocess.js';
 
 export type DetectedAudioInput =
@@ -200,6 +201,7 @@ export interface DeliveryEncodeOptions {
   musicEnabled: boolean;
   musicPath?: string;
   musicVolumeDb?: number;
+  sfxCues?: AudioSfxCue[];
   transitionClickPath?: string;
   transitionOffsetsMs?: number[];
   signal?: AbortSignal;
@@ -208,36 +210,62 @@ export interface DeliveryEncodeOptions {
 export function buildDeliveryFfmpegArgs(opts: DeliveryEncodeOptions): string[] {
   const args: string[] = ['-y', '-i', opts.rawVideoPath, '-i', opts.voice48kPath];
 
-  const filterParts: string[] = ['[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[voice]'];
-  const mixLabels: string[] = ['[voice]'];
+  const hasMusic = Boolean(opts.musicEnabled && opts.musicPath && fs.existsSync(opts.musicPath));
+  const filterParts: string[] = [];
+  const mixLabels: string[] = [];
   let nextInputIdx = 2;
 
-  if (opts.musicEnabled && opts.musicPath && fs.existsSync(opts.musicPath)) {
+  if (hasMusic && opts.musicPath) {
+    filterParts.push(
+      '[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[voice_mix][voice_sc]',
+    );
+    mixLabels.push('[voice_mix]');
+
     args.push('-stream_loop', '-1', '-i', opts.musicPath);
     const volDb = opts.musicVolumeDb ?? -22;
     const fadeStart = Math.max(0.2, opts.durationSec - 0.8).toFixed(2);
     filterParts.push(
-      `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${volDb}dB,atrim=0:${opts.durationSec.toFixed(3)},afade=t=in:st=0:d=0.35,afade=t=out:st=${fadeStart}:d=0.75[bgm]`,
+      `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${volDb}dB,atrim=0:${opts.durationSec.toFixed(3)},afade=t=in:st=0:d=0.35,afade=t=out:st=${fadeStart}:d=0.75[bgm_raw]`,
+    );
+    filterParts.push(
+      '[bgm_raw][voice_sc]sidechaincompress=threshold=0.02:ratio=4:attack=20:release=250:makeup=1[bgm]',
     );
     mixLabels.push('[bgm]');
     nextInputIdx++;
+  } else {
+    filterParts.push('[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[voice]');
+    mixLabels.push('[voice]');
   }
 
-  const validClicks = (opts.transitionOffsetsMs ?? []).filter((ms) => ms > 150 && ms < opts.durationSec * 1000 - 150);
-  if (opts.transitionClickPath && fs.existsSync(opts.transitionClickPath) && validClicks.length > 0) {
-    for (const offsetMs of validClicks) {
-      args.push('-i', opts.transitionClickPath);
-      const label = `click_${nextInputIdx}`;
-      filterParts.push(
-        `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=-16dB,adelay=${Math.round(offsetMs)}|${Math.round(offsetMs)}[${label}]`,
-      );
-      mixLabels.push(`[${label}]`);
-      nextInputIdx++;
-    }
+  // Prefer explicit sfxCues, falling back to legacy transitionClickPath + transitionOffsetsMs
+  const resolvedCues: AudioSfxCue[] =
+    opts.sfxCues && opts.sfxCues.length > 0
+      ? opts.sfxCues
+      : opts.transitionClickPath && opts.transitionOffsetsMs
+        ? opts.transitionOffsetsMs.map((offsetMs) => ({
+            path: opts.transitionClickPath!,
+            offsetMs,
+            volumeDb: -16,
+          }))
+        : [];
+
+  const maxOffsetMs = opts.durationSec * 1000 - 120;
+  for (const cue of resolvedCues) {
+    if (cue.offsetMs <= 100 || cue.offsetMs >= maxOffsetMs) continue;
+    if (!fs.existsSync(cue.path)) continue;
+    args.push('-i', cue.path);
+    const label = `sfx_${nextInputIdx}`;
+    const cueVol = cue.volumeDb ?? -16;
+    const delay = Math.round(cue.offsetMs);
+    filterParts.push(
+      `[${nextInputIdx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${cueVol}dB,adelay=${delay}|${delay}[${label}]`,
+    );
+    mixLabels.push(`[${label}]`);
+    nextInputIdx++;
   }
 
   if (mixLabels.length === 1) {
-    filterParts.push('[voice]anull[aout]');
+    filterParts.push(`${mixLabels[0]}anull[aout]`);
   } else {
     filterParts.push(
       `${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:normalize=0,alimiter=limit=0.95[aout]`,

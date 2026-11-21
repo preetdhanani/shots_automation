@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { REEL_FORMATS } from '@post/core/shared';
 import { ExternalLink, RotateCcw, Trash2 } from 'lucide-react';
 import { InstagramIcon } from '../components/InstagramIcon.js';
 import { formatErrorMessage, type ReelDto } from '../api.js';
@@ -80,8 +81,13 @@ export const LibraryView: React.FC<Props> = ({
                     No preview frame
                   </div>
                 )}
-                <div className="absolute top-2.5 left-2.5">
+                <div className="absolute top-2.5 left-2.5 flex flex-wrap items-center gap-1.5">
                   <PillarBadge pillar={reel.pillar} />
+                  {reel.storyboard.format ? (
+                    <span className="rounded-md border border-white/15 bg-black/75 px-2 py-0.5 font-mono text-[10px] font-medium text-zinc-200 backdrop-blur-sm">
+                      {REEL_FORMATS[reel.storyboard.format].label}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 

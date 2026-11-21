@@ -7,14 +7,22 @@ import { serve } from '@hono/node-server';
 import {
   computeNarrationHash,
   computeStoryboardVisualHash,
+  FORMAT_SAMPLE_STORYBOARDS,
+  isChannelOutroScene,
   LocalAssetStorage,
   PipelineQueue,
+  REEL_FORMAT_IDS,
   ReelOrchestrator,
   SAMPLE_DEMO_STORYBOARD,
   SqliteStore,
+  toFlatStoryboardPayload,
   type AppEnv,
+  type FetchSourceVisualFn,
+  type GenerateBrollFn,
+  type ReelFormatId,
   type ReelRecord,
   type RenderVideoCallback,
+  type SynthesizeVoiceFn,
   type TopicRecord,
 } from '@post/core';
 import { createServerApp } from '../../apps/server/src/app.js';
@@ -28,10 +36,18 @@ export interface VerifyHarness {
   close: () => Promise<void>;
 }
 
-function generateTinyValidMedia(workDir: string): { mp4Path: string; jpgPath: string } {
+function generateTinyValidMedia(workDir: string): {
+  mp4Path: string;
+  jpgPath: string;
+  voice48kPath: string;
+  voice16kPath: string;
+} {
   const mp4Path = path.join(workDir, 'fixture.mp4');
   const jpgPath = path.join(workDir, 'fixture.jpg');
+  const voice48kPath = path.join(workDir, 'fixture-voice-48k.wav');
+  const voice16kPath = path.join(workDir, 'fixture-voice-16k.wav');
 
+  // 5-second vertical 30fps MP4 (>= 3s Instagram Reels spec minimum)
   execFileSync(
     'ffmpeg',
     [
@@ -39,13 +55,13 @@ function generateTinyValidMedia(workDir: string): { mp4Path: string; jpgPath: st
       '-f',
       'lavfi',
       '-i',
-      'color=c=0x11131b:s=360x640:d=1',
+      'color=c=0x162033:s=360x640:r=30:d=5',
       '-f',
       'lavfi',
       '-i',
-      'anullsrc=r=48000:cl=stereo',
+      'sine=frequency=240:sample_rate=48000:duration=5',
       '-t',
-      '1',
+      '5',
       '-c:v',
       'libx264',
       '-pix_fmt',
@@ -58,16 +74,111 @@ function generateTinyValidMedia(workDir: string): { mp4Path: string; jpgPath: st
     { stdio: 'ignore' },
   );
 
+  // Rich colorful gradient JPEG so fixture covers & source_spotlight images are non-blank
   execFileSync(
     'ffmpeg',
-    ['-y', '-i', mp4Path, '-frames:v', '1', '-q:v', '3', jpgPath],
+    [
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=1080x720:duration=0.1',
+      '-frames:v',
+      '1',
+      '-q:v',
+      '3',
+      jpgPath,
+    ],
     { stdio: 'ignore' },
   );
 
-  return { mp4Path, jpgPath };
+  // Non-silent 5s stereo 48kHz & mono 16kHz voice fixtures (exercises sidechaincompress ducking)
+  execFileSync(
+    'ffmpeg',
+    [
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=220:sample_rate=48000:duration=5',
+      '-af',
+      'volume=0.35',
+      '-ac',
+      '2',
+      '-c:a',
+      'pcm_s16le',
+      voice48kPath,
+    ],
+    { stdio: 'ignore' },
+  );
+
+  execFileSync(
+    'ffmpeg',
+    [
+      '-y',
+      '-i',
+      voice48kPath,
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-c:a',
+      'pcm_s16le',
+      voice16kPath,
+    ],
+    { stdio: 'ignore' },
+  );
+
+  return { mp4Path, jpgPath, voice48kPath, voice16kPath };
+}
+
+const UNIQUE_HOOK_HEADLINES = [
+  'Formal Silicon Proofs Beat Bugs',
+  'Fast Harness Loops Lift Accuracy',
+  'Tiny Scoped Diffs Ship Faster',
+  'Cached Coding Tokens Drop 60%',
+  'Autonomous Verifiers Catch Drift',
+  'Ranked Countdown For Clean Code',
+  'Head-To-Head Agent Loop Battle',
+  'Four Steps To Zero Regressions',
+  'Myths Slowing Modern Dev Teams',
+  'Automated Visual Checks Win Daily',
+];
+
+const UNIQUE_HOOK_PREFIXES = [
+  'Watch closely how',
+  'Engineers just discovered',
+  'Stop guessing why',
+  'Real benchmarks prove',
+  'Every senior builder',
+  'Three sharp rules',
+  'Here is what',
+  'Modern AI teams',
+  'Nobody talks about',
+  'Fast local harnesses',
+];
+
+function extractFormatFromPrompt(systemPrompt: string): ReelFormatId {
+  const match = systemPrompt.match(/Reel Format:\s*([a-z0-9_]+)/i);
+  const candidate = match?.[1]?.trim() as ReelFormatId | undefined;
+  if (candidate && REEL_FORMAT_IDS.includes(candidate)) {
+    return candidate;
+  }
+  return 'deep_dive_demo';
+}
+
+function extractSummaryFromUserPrompt(userPrompt: string): string {
+  const marker = 'Topic Summary & Facts:\n';
+  const idx = userPrompt.indexOf(marker);
+  if (idx === -1) return '';
+  const tail = userPrompt.slice(idx + marker.length);
+  const endIdx = tail.indexOf('\n\n');
+  return (endIdx === -1 ? tail : tail.slice(0, endIdx)).trim();
 }
 
 function startMockOpenAIServer(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  let generationSeq = 0;
+
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -89,15 +200,22 @@ function startMockOpenAIServer(): Promise<{ baseUrl: string; close: () => Promis
       }
 
       if (req.method === 'POST' && req.url === '/v1/chat/completions') {
-        let parsed: { messages?: Array<{ content?: string }> } = {};
+        let parsed: { messages?: Array<{ role?: string; content?: string }> } = {};
         try {
-          parsed = JSON.parse(body) as { messages?: Array<{ content?: string }> };
+          parsed = JSON.parse(body) as { messages?: Array<{ role?: string; content?: string }> };
         } catch {
           // Ignore parse error
         }
 
-        const firstMsg = parsed.messages?.[0]?.content ?? '';
-        const isProbe = firstMsg.includes('Reply with OK');
+        const systemMsg =
+          parsed.messages?.find((m) => m.role === 'system')?.content ??
+          parsed.messages?.[0]?.content ??
+          '';
+        const userMsg =
+          parsed.messages?.find((m) => m.role === 'user')?.content ??
+          parsed.messages?.[1]?.content ??
+          '';
+        const isProbe = systemMsg.includes('Reply with OK') || userMsg.includes('Reply with OK');
 
         if (isProbe) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -110,95 +228,40 @@ function startMockOpenAIServer(): Promise<{ baseUrl: string; close: () => Promis
           return;
         }
 
-        const storyboardPayload = {
-          title: 'Mock Verified Coding Harness Release',
-          pillar: 'harnesses',
-          caption: 'Deterministic verification loops catch regressions before shipping.',
-          hashtags: ['#ai', '#devtools', '#coding', '#benchmarks', '#vibecoding'],
-          scenes: [
-            {
-              id: 'scene-1',
-              type: 'hook_title',
-              narration:
-                'Deterministic verification loops catch broken UI flows before your users ever see them.',
-              hookTitle: {
-                badge: 'VERIFICATION',
-                headline: 'Verify Every Flow Automatically',
-                subheadline: 'Screenshots, console checks, and API assertions on every run.',
-                highlightStat: '0 regressions',
-              },
-            },
-            {
-              id: 'scene-2',
-              type: 'benchmark_bars',
-              narration:
-                'Automated browser loops cut UI bug escape rates sharply compared to manual spot checks.',
-              benchmarkBars: {
-                title: 'Bug Catch Rate',
-                metricUnit: '%',
-                sourceLabel: 'Internal E2E',
-                bars: [
-                  { label: 'Manual Check', value: 42 },
-                  { label: 'Unit Only', value: 68 },
-                  { label: 'Full E2E Loop', value: 96, isWinner: true },
-                ],
-              },
-            },
-            {
-              id: 'scene-3',
-              type: 'code_compare',
-              narration:
-                'Wire a manifest drift test so every new screen forces a matching verification check.',
-              codeCompare: {
-                title: 'Manifest Drift Gate',
-                language: 'ts',
-                filename: 'manifest.ts',
-                mode: 'before_after',
-                beforeLabel: 'Ad-hoc',
-                beforeCode: '// remember to test new pages',
-                afterLabel: 'Enforced',
-                afterCode: 'expect(missingViews).toEqual([]);',
-                highlightLines: [1],
-              },
-            },
-            {
-              id: 'scene-4',
-              type: 'terminal_demo',
-              narration:
-                'One single command boots an isolated server, drives headless Chrome, and writes a visual report.',
-              terminalDemo: {
-                title: 'Single Command Verify',
-                windowTitle: 'zsh - post',
-                command: 'npm run verify:e2e',
-                outputLines: [
-                  { text: '[ok] 6/6 E2E checks passed', tone: 'success' },
-                  { text: '[ok] 0 console errors, 0 HTTP 4xx/5xx', tone: 'accent' },
-                ],
-              },
-            },
-            {
-              id: 'scene-5',
-              type: 'takeaway_cta',
-              narration:
-                'Make your verification suite evolve automatically alongside every feature you ship.',
-              takeawayCta: {
-                badge: 'PRO RULE',
-                headline: 'Automate Your Eyes',
-                takeaway: 'Treat visual E2E checks as first-class CI gates.',
-                ctaText: 'Save this workflow',
-              },
-            },
-          ],
-        };
+        generationSeq++;
+        const formatId = extractFormatFromPrompt(systemMsg);
+        const template = structuredClone(FORMAT_SAMPLE_STORYBOARDS[formatId]);
+        // Strip channel outro because generateStoryboard appends it automatically
+        const contentScenes = template.scenes.filter((s) => !isChannelOutroScene(s));
+        const prefix = UNIQUE_HOOK_PREFIXES[(generationSeq - 1) % UNIQUE_HOOK_PREFIXES.length]!;
+        const freshHeadline =
+          UNIQUE_HOOK_HEADLINES[(generationSeq - 1) % UNIQUE_HOOK_HEADLINES.length]!;
+        const summaryQuote = extractSummaryFromUserPrompt(userMsg);
+
+        for (const scene of contentScenes) {
+          if (scene.type === 'hook_title') {
+            scene.headline = freshHeadline;
+            scene.narration = `${prefix} issue ${generationSeq} transforms ${formatId.replace(/_/g, ' ')} workflows for modern developers today.`;
+          }
+          if (scene.type === 'social_post' && summaryQuote.length >= 20) {
+            scene.postText = summaryQuote.slice(0, 220);
+          }
+        }
+
+        const payload = toFlatStoryboardPayload({
+          ...template,
+          title: `${template.title.slice(0, 100)} (${generationSeq})`,
+          scenes: contentScenes,
+        });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
-            id: 'chatcmpl-verify-sb',
+            id: `chatcmpl-verify-sb-${generationSeq}`,
             choices: [
               {
                 index: 0,
-                message: { role: 'assistant', content: JSON.stringify(storyboardPayload) },
+                message: { role: 'assistant', content: JSON.stringify(payload) },
               },
             ],
           }),
@@ -229,7 +292,7 @@ function startMockOpenAIServer(): Promise<{ baseUrl: string; close: () => Promis
 function seedFixtureData(
   store: SqliteStore,
   storage: LocalAssetStorage,
-  media: { mp4Path: string; jpgPath: string },
+  media: { mp4Path: string; jpgPath: string; voice48kPath: string; voice16kPath: string },
 ): { readyReel: ReelRecord; publishedReel: ReelRecord; topics: TopicRecord[] } {
   const nowIso = new Date().toISOString();
   const { topics } = store.upsertTopics([
@@ -280,14 +343,15 @@ function seedFixtureData(
 
   const readyReel = store.createReel({
     topicId: topics[0]!.id,
+    isSample: true,
     title: SAMPLE_DEMO_STORYBOARD.title,
     pillar: SAMPLE_DEMO_STORYBOARD.pillar,
     status: 'READY_FOR_REVIEW',
-    voiceName: 'Puck',
     storyboard: SAMPLE_DEMO_STORYBOARD,
     caption: SAMPLE_DEMO_STORYBOARD.caption,
     hashtags: SAMPLE_DEMO_STORYBOARD.hashtags,
-    isSample: true,
+    voiceName: 'Puck',
+    musicEnabled: true,
   });
 
   storage.ensureReelDir(readyReel.id);
@@ -296,15 +360,32 @@ function seedFixtureData(
   const readyCaptionsPath = storage.reelFile(readyReel.id, 'captions.json');
   fs.copyFileSync(media.mp4Path, readyVideoPath);
   fs.copyFileSync(media.jpgPath, readyCoverPath);
+  fs.copyFileSync(media.voice48kPath, storage.reelFile(readyReel.id, 'voice-48k.wav'));
+  fs.copyFileSync(media.voice16kPath, storage.reelFile(readyReel.id, 'voice-16k.wav'));
   fs.writeFileSync(
     readyCaptionsPath,
-    JSON.stringify({ alignmentMode: 'estimated', captions: [], sceneTimings: [] }, null, 2),
+    JSON.stringify({
+      alignmentMode: 'estimated',
+      audioDurationMs: 5000,
+      fps: 30,
+      captions: [],
+      sceneTimings: SAMPLE_DEMO_STORYBOARD.scenes.map((scene, idx) => ({
+        sceneId: scene.id,
+        sceneType: scene.type,
+        label: scene.type,
+        startMs: idx * 800,
+        endMs: (idx + 1) * 800,
+        startFrame: idx * 24,
+        durationInFrames: 24,
+      })),
+    }),
   );
+
   store.updateReel(readyReel.id, {
     videoPath: readyVideoPath,
     coverPath: readyCoverPath,
-    audioDurationMs: 41_200,
     alignmentMode: 'estimated',
+    audioDurationMs: 5000,
     renderedNarrationHash: narrationHash,
     renderedVoiceName: 'Puck',
     renderedStoryboardHash: visualHash,
@@ -314,7 +395,7 @@ function seedFixtureData(
       width: 1080,
       height: 1920,
       fps: 30,
-      durationSec: 41.2,
+      durationSec: 5.0,
       videoCodec: 'h264',
       audioCodec: 'aac',
       audioSampleRate: 48000,
@@ -325,14 +406,15 @@ function seedFixtureData(
 
   const publishedReel = store.createReel({
     topicId: topics[1]!.id,
+    isSample: true,
     title: 'Published Benchmark Comparison Reel',
     pillar: 'benchmarks',
     status: 'PUBLISHED',
-    voiceName: 'Kore',
     storyboard: SAMPLE_DEMO_STORYBOARD,
-    caption: 'Published benchmark reel ready in library.',
+    caption: 'Published benchmark summary for developer archive verification.',
     hashtags: ['#benchmarks', '#ai', '#coding'],
-    isSample: false,
+    voiceName: 'Fenrir',
+    musicEnabled: true,
   });
 
   storage.ensureReelDir(publishedReel.id);
@@ -343,7 +425,7 @@ function seedFixtureData(
   store.updateReel(publishedReel.id, {
     videoPath: pubVideoPath,
     coverPath: pubCoverPath,
-    audioDurationMs: 39_500,
+    audioDurationMs: 5000,
     instagramMediaId: 'ig_verify_123456',
     instagramPermalink: 'https://www.instagram.com/reel/verify123/',
     publishedAt: nowIso,
@@ -374,6 +456,7 @@ export async function startVerifyHarness(workspaceRoot: string): Promise<VerifyH
     GEMINI_API_KEY: 'verify-dummy-gemini-key',
     GEMINI_TEXT_MODEL: 'gemini-3.8-flash',
     GEMINI_TTS_MODEL: 'gemini-3.8-flash-tts',
+    GEMINI_VEO_MODEL: 'veo-3.1-fast-generate-preview',
     GEMINI_TTS_VOICE: 'Puck',
     ENABLE_GEMINI_SEARCH_GROUNDING: false,
     OPENAI_COMPAT_NAME: 'OpenAI-Compatible (.env)',
@@ -402,10 +485,73 @@ export async function startVerifyHarness(workspaceRoot: string): Promise<VerifyH
   const queue = new PipelineQueue(store);
 
   const fastRenderVideo: RenderVideoCallback = async ({ outputVideoPath, onRenderProgress }) => {
-    onRenderProgress?.(50, 15, 30);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    onRenderProgress?.(50, 75, 150);
+    await new Promise((resolve) => setTimeout(resolve, 120));
     fs.copyFileSync(media.mp4Path, outputVideoPath);
-    onRenderProgress?.(100, 30, 30);
+    onRenderProgress?.(100, 150, 150);
+  };
+
+  const stubSynthesizeVoice: SynthesizeVoiceFn = async ({ workDir, isSample, signal }) => {
+    // Give sample runs a brief abortable window so Check 04 can observe live progress & Cancel
+    if (isSample) {
+      await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new Error('Cancelled'));
+          return;
+        }
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, 2200);
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new Error('Cancelled'));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    }
+    fs.mkdirSync(workDir, { recursive: true });
+    const rawPath = path.join(workDir, 'voice-raw.bin');
+    const trimmedPath = path.join(workDir, 'voice-trimmed.wav');
+    const voice48kPath = path.join(workDir, 'voice-48k.wav');
+    const voice16kPath = path.join(workDir, 'voice-16k.wav');
+    fs.copyFileSync(media.voice48kPath, rawPath);
+    fs.copyFileSync(media.voice48kPath, trimmedPath);
+    fs.copyFileSync(media.voice48kPath, voice48kPath);
+    fs.copyFileSync(media.voice16kPath, voice16kPath);
+    return {
+      rawAudioPath: rawPath,
+      trimmedMasterPath: trimmedPath,
+      voice48kPath,
+      voice16kPath,
+      durationMs: 5000,
+    };
+  };
+
+  const stubFetchSourceVisual: FetchSourceVisualFn = async ({ url, outDir, filename }) => {
+    const file = filename ?? 'source-visual.jpg';
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.copyFileSync(media.jpgPath, path.join(outDir, file));
+    return {
+      kind: 'image',
+      file,
+      sourceUrl: url,
+      width: 1080,
+      height: 720,
+    };
+  };
+
+  const stubGenerateBroll: GenerateBrollFn = async ({ sceneId, outDir }) => {
+    const file = `broll-${sceneId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.mp4`;
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.copyFileSync(media.mp4Path, path.join(outDir, file));
+    return {
+      asset: {
+        kind: 'video',
+        file,
+        durationMs: 5000,
+      },
+    };
   };
 
   const orchestrator = new ReelOrchestrator({
@@ -415,6 +561,9 @@ export async function startVerifyHarness(workspaceRoot: string): Promise<VerifyH
     storage,
     queue,
     renderVideo: fastRenderVideo,
+    synthesizeVoice: stubSynthesizeVoice,
+    fetchSourceVisual: stubFetchSourceVisual,
+    generateBroll: stubGenerateBroll,
     workerSource: 'server',
   });
 

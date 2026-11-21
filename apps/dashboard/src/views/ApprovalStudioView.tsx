@@ -4,6 +4,7 @@ import {
   VOICE_NAMES,
   VOICE_PROFILES,
   type ReelStoryboard,
+  type ReelStyle,
   type VoiceName,
 } from '@post/core/shared';
 import {
@@ -32,6 +33,7 @@ import {
 import { PhonePreview } from '../components/PhonePreview.js';
 import { PillarBadge } from '../components/PillarBadge.js';
 import { PublishModal } from '../components/PublishModal.js';
+import { VarietyPanel } from '../components/VarietyPanel.js';
 import { VisualSceneEditor } from '../components/VisualSceneEditor.js';
 
 interface Props {
@@ -72,6 +74,7 @@ export const ApprovalStudioView: React.FC<Props> = ({
   const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [reshuffling, setReshuffling] = useState(false);
   const [playingVoice, setPlayingVoice] = useState<VoiceName | null>(null);
 
   // Lifted edit state shared across all 3 studio tabs
@@ -151,7 +154,11 @@ export const ApprovalStudioView: React.FC<Props> = ({
 
     setSaving(true);
     try {
-      const res = await apiFetch<{ reel: ReelDto; staleness: ReelDetailDto['staleness'] }>(
+      const res = await apiFetch<{
+        reel: ReelDto;
+        staleness: ReelDetailDto['staleness'];
+        variety?: ReelDetailDto['variety'];
+      }>(
         `/api/reels/${encodeURIComponent(reel.id)}`,
         {
           method: 'PATCH',
@@ -165,12 +172,55 @@ export const ApprovalStudioView: React.FC<Props> = ({
           }),
         },
       );
-      setDetail((prev) => (prev ? { ...prev, reel: res.reel, staleness: res.staleness } : prev));
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              reel: res.reel,
+              staleness: res.staleness,
+              variety: res.variety ?? prev.variety,
+            }
+          : prev,
+      );
       onReelsChanged();
       return res.reel;
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleReshuffleStyle = async () => {
+    if (!reel) return;
+    setReshuffling(true);
+    try {
+      await flushEdits();
+      const res = await apiFetch<{
+        reel: ReelDto;
+        staleness: ReelDetailDto['staleness'];
+        variety?: ReelDetailDto['variety'];
+      }>(`/api/reels/${encodeURIComponent(reel.id)}/restyle`, { method: 'POST' });
+      setDraftStoryboard(res.reel.storyboard);
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              reel: res.reel,
+              staleness: res.staleness,
+              variety: res.variety ?? prev.variety,
+            }
+          : prev,
+      );
+      onReelsChanged();
+      onNotify('Reshuffled visual style & transitions. Click Re-render Video to apply.', 'success');
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Reshuffle failed', 'error');
+    } finally {
+      setReshuffling(false);
+    }
+  };
+
+  const handleChangeStyle = (nextStyle: ReelStyle) => {
+    setDraftStoryboard((prev) => (prev ? { ...prev, style: nextStyle } : prev));
   };
 
   const handleSaveOnly = async () => {
@@ -451,12 +501,12 @@ export const ApprovalStudioView: React.FC<Props> = ({
                 </div>
               ) : null}
 
-              {visualsEditedLocally && activeTab === 'publish' ? (
+              {visualsEditedLocally ? (
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-500/35 bg-cyan-500/10 p-3 text-xs text-cyan-100">
                   <span>
                     {audioEditedLocally
                       ? 'Spoken narration or voice changed. Regenerate Voice & Video before publishing.'
-                      : 'Visual scenes or music changed. Re-render video so the MP4 matches your edits.'}
+                      : 'Visual scenes, style, or music changed. Re-render video so the MP4 matches your edits.'}
                   </span>
                   <button
                     type="button"
@@ -592,6 +642,16 @@ export const ApprovalStudioView: React.FC<Props> = ({
 
               {activeTab === 'storyboard' ? (
                 <div className="space-y-5">
+                  <VarietyPanel
+                    storyboard={draftStoryboard}
+                    variety={detail?.variety}
+                    disabled={['GENERATING', 'PUBLISHING', 'PUBLISHED'].includes(reel.status)}
+                    reshuffling={reshuffling}
+                    onChangeStyle={handleChangeStyle}
+                    onReshuffleStyle={handleReshuffleStyle}
+                    onSelectSimilarReel={onSelectReel}
+                  />
+
                   <div className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-[#151822] p-4 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-zinc-300">
@@ -634,7 +694,9 @@ export const ApprovalStudioView: React.FC<Props> = ({
                         <span className="text-xs font-medium text-zinc-200">
                           Background Music & SFX
                         </span>
-                        <p className="text-[11px] text-zinc-400">Subtle -22dB pad + clicks</p>
+                        <p className="text-[11px] text-zinc-400">
+                          Ducked mood track + transition SFX
+                        </p>
                       </div>
                       <input
                         type="checkbox"

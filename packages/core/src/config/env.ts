@@ -18,6 +18,7 @@ const EnvSchema = z.object({
   GEMINI_API_KEY: z.string().trim().default(''),
   GEMINI_TEXT_MODEL: z.string().trim().min(1).default('gemini-3.8-flash'),
   GEMINI_TTS_MODEL: z.string().trim().min(1).default('gemini-3.8-flash-tts'),
+  GEMINI_VEO_MODEL: z.string().trim().min(1).default('veo-3.1-fast-generate-preview'),
   GEMINI_TTS_VOICE: z.enum(VOICE_NAMES).default('Puck'),
   ENABLE_GEMINI_SEARCH_GROUNDING: BooleanFlagSchema,
 
